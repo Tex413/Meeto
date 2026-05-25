@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meeto Admin</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #273449;
+  --border: rgba(255,255,255,0.08);
+  --text: #f1f5f9;
+  --text2: #94a3b8;
+  --text3: #64748b;
+  --blue: #3b82f6;
+  --blue-bg: rgba(59,130,246,0.12);
+  --green: #22c55e;
+  --green-bg: rgba(34,197,94,0.12);
+  --amber: #f59e0b;
+  --amber-bg: rgba(245,158,11,0.12);
+  --red: #f87171;
+  --red-bg: rgba(248,113,113,0.12);
+  --radius: 10px;
+}
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+.layout { display: flex; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: 220px; flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 24px 0;
+  position: sticky; top: 0; height: 100vh;
+}
+.sidebar-logo { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.sidebar-logo-row { display: flex; align-items: center; gap: 8px; }
+.sidebar-logo-icon { font-size: 20px; }
+.sidebar-logo-name { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+.sidebar-badge { font-size: 10px; background: var(--blue-bg); color: var(--blue); border-radius: 4px; padding: 2px 6px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px; cursor: pointer;
+  font-size: 14px; font-weight: 500; color: var(--text2);
+  border-radius: 0; transition: background 0.1s, color 0.1s;
+  border: none; background: none; width: 100%; text-align: left;
+}
+.nav-item:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.nav-item.active { background: var(--blue-bg); color: var(--blue); }
+.nav-icon { font-size: 16px; }
+
+/* Main */
+.main { flex: 1; padding: 32px 40px; overflow-y: auto; }
+.page { display: none; }
+.page.active { display: block; }
+h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
+.page-sub { font-size: 14px; color: var(--text2); margin-bottom: 28px; }
+
+/* Stat cards */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-bottom: 32px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.stat-value { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 4px; }
+.stat-label { font-size: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card.blue .stat-value { color: var(--blue); }
+.stat-card.green .stat-value { color: var(--green); }
+.stat-card.amber .stat-value { color: var(--amber); }
+
+/* Sections */
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; }
+.section-title { font-size: 14px; font-weight: 700; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text2); }
+
+/* Form elements */
+label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+input[type=text], input[type=password], select {
+  width: 100%; padding: 10px 12px; font-size: 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-family: inherit; outline: none;
+  transition: border-color 0.15s; margin-bottom: 14px;
+}
+input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.row { display: flex; gap: 12px; align-items: flex-end; }
+.row > * { flex: 1; }
+.row .btn-wrap { flex: none; margin-bottom: 14px; }
+
+/* Buttons */
+.btn {
+  padding: 10px 18px; font-size: 14px; font-weight: 600;
+  border: none; border-radius: 8px; cursor: pointer; font-family: inherit;
+  transition: opacity 0.15s;
+}
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Key output */
+.key-output {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px;
+  font-family: 'Courier New', monospace; font-size: 13px;
+  word-break: break-all; color: var(--text); margin-bottom: 12px;
+  min-height: 46px; display: flex; align-items: center;
+}
+.key-output.empty { color: var(--text3); font-family: inherit; font-style: italic; }
+
+/* Status pills */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; padding: 3px 10px;
+  border-radius: 20px;
+}
+.pill.ok { background: var(--green-bg); color: var(--green); }
+.pill.warn { background: var(--amber-bg); color: var(--amber); }
+.pill.bad { background: var(--red-bg); color: var(--red); }
+.pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* Verify result */
+.verify-result { padding: 12px 16px; border-radius: 8px; font-size: 14px; display: none; }
+.verify-result.valid { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+.verify-result.invalid { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 18px; font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3); z-index: 999;
+  transition: opacity 0.3s; opacity: 0; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+/* Status indicator row */
+.status-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+
+/* Divider */
+hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-row">
+        <span class="sidebar-logo-icon">☄️</span>
+        <span class="sidebar-logo-name">Meeto</span>
+      </div>
+      <div style="margin-top:6px"><span class="sidebar-badge">Admin</span></div>
+    </div>
+    <button class="nav-item active" onclick="showPage('overview', this)">
+      <span class="nav-icon">📊</span> Overview
+    </button>
+    <button class="nav-item" onclick="showPage('licenses', this)">
+      <span class="nav-icon">🔑</span> License Keys
+    </button>
+    <button class="nav-item" onclick="showPage('stripe', this)">
+      <span class="nav-icon">💳</span> Stripe
+    </button>
+    <button class="nav-item" onclick="showPage('settings', this)">
+      <span class="nav-icon">⚙️</span> Settings
+    </button>
+    <div style="flex:1"></div>
+    <div style="padding: 0 20px; margin-top: 24px;">
+      <button class="btn btn-secondary" style="width:100%; font-size:13px;" onclick="window.location.href='/'">← Back to App</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Overview -->
+    <div class="page active" id="page-overview">
+      <h2>Overview</h2>
+      <p class="page-sub">Server status and usage statistics.</p>
+
+      <div class="status-row" id="statusRow">
+        <span class="pill ok">Server running</span>
+      </div>
+
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card blue"><div class="stat-value" id="sMeetings">—</div><div class="stat-label">Meetings</div></div>
+        <div class="stat-card"><div class="stat-value" id="sCards">—</div><div class="stat-label">Cards</div></div>
+        <div class="stat-card"><div class="stat-value" id="sDocs">—</div><div class="stat-label">Documents</div></div>
+        <div class="stat-card green"><div class="stat-value" id="sDb">—</div><div class="stat-label">DB Size</div></div>
+        <div class="stat-card amber"><div class="stat-value" id="sUptime">—</div><div class="stat-label">Uptime</div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Configuration</div>
+        <div class="status-row" id="configStatus"></div>
+      </div>
+    </div>
+
+    <!-- Licenses -->
+    <div class="page" id="page-licenses">
+      <h2>License Keys</h2>
+      <p class="page-sub">Generate and verify Meeto license keys.</p>
+
+      <div class="section">
+        <div class="section-title">Generate Key</div>
+        <div class="row" style="align-items:flex-start">
+          <div>
+            <label for="keyType">Plan</label>
+            <select id="keyType">
+              <option value="lifetime">Lifetime ($119)</option>
+              <option value="annual">Annual ($29.95/yr)</option>
+            </select>
+          </div>
+          <div class="btn-wrap">
+            <button class="btn btn-primary" onclick="generateKey()">Generate</button>
+          </div>
+        </div>
+        <label>Generated Key</label>
+        <div class="key-output empty" id="genKeyOutput">Key will appear here after generation.</div>
+        <button class="btn btn-secondary" onclick="copyGenKey()" id="copyGenBtn" disabled>Copy key</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Verify Key</div>
+        <label for="verifyInput">License Key</label>
+        <div class="row" style="align-items:flex-start">
+          <div>
+            <input type="text" id="verifyInput" placeholder="MEETO-..." style="margin-bottom:0" />
+          </div>
+          <div class="btn-wrap" style="margin-bottom:0">
+            <button class="btn btn-secondary" onclick="verifyKey()">Verify</button>
+          </div>
+        </div>
+        <div class="verify-result" id="verifyResult" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- Stripe -->
+    <div class="page" id="page-stripe">
+      <h2>Stripe</h2>
+      <p class="page-sub">Configure your Stripe integration for checkout and webhooks.</p>
+
+      <div class="section">
+        <div class="section-title">Current Status</div>
+        <div id="stripeStatus"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Stripe Keys</div>
+        <label for="stripeKeyInput">Secret Key (sk_live_... or sk_test_...)</label>
+        <input type="password" id="stripeKeyInput" placeholder="sk_live_..." />
+        <label for="webhookInput">Webhook Secret (whsec_...)</label>
+        <input type="password" id="webhookInput" placeholder="whsec_..." />
+        <p style="font-size:12px; color:var(--text3); margin-bottom:16px;">
+          Set your Stripe webhook endpoint to <code style="background:var(--bg); padding:2px 5px; border-radius:4px;">http://localhost:7432/stripe/webhook</code><br>
+          Enable events: <code style="background:var(--bg); padding:2px 5px; border-radius:4px;">checkout.session.completed</code>
+        </p>
+        <button class="btn btn-primary" onclick="saveStripe()">Save Stripe config</button>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="page" id="page-settings">
+      <h2>Settings</h2>
+      <p class="page-sub">App configuration and license secret management.</p>
+
+      <div class="section">
+        <div class="section-title">License Secret</div>
+        <p style="font-size:13px; color:var(--text2); margin-bottom:14px; line-height:1.6;">
+          The license secret is used to sign and verify all license keys. Keep this value secret and constant — changing it will invalidate all previously issued keys.
+        </p>
+        <label for="licenseSecretInput">License Secret</label>
+        <input type="password" id="licenseSecretInput" placeholder="Enter a strong random secret..." />
+        <button class="btn btn-primary" onclick="saveLicenseSecret()">Save secret</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Danger Zone</div>
+        <p style="font-size:13px; color:var(--text2); margin-bottom:16px;">Actions here cannot be undone.</p>
+        <button class="btn btn-secondary" style="color:var(--red); border-color:rgba(248,113,113,0.2);" onclick="confirmLogout()">Sign out of Meeto</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let genKey = '';
+
+function showPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'overview') loadStats();
+  if (name === 'stripe') loadStripeStatus();
+}
+
+function toast(msg, dur = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), dur);
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+function fmtUptime(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+async function loadStats() {
+  const r = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
+  if (!r) return;
+  document.getElementById('sMeetings').textContent = r.meetings;
+  document.getElementById('sCards').textContent = r.cards;
+  document.getElementById('sDocs').textContent = r.docs;
+  document.getElementById('sDb').textContent = fmtBytes(r.dbSize);
+  document.getElementById('sUptime').textContent = fmtUptime(r.uptime);
+  const cf = document.getElementById('configStatus');
+  cf.innerHTML = [
+    `<span class="pill ${r.stripeConfigured ? 'ok' : 'warn'}">Stripe ${r.stripeConfigured ? 'configured' : 'not configured'}</span>`,
+    `<span class="pill ${r.licenseSecretSet ? 'ok' : 'warn'}">License secret ${r.licenseSecretSet ? 'set' : 'not set'}</span>`
+  ].join('');
+}
+
+async function generateKey() {
+  const type = document.getElementById('keyType').value;
+  const r = await fetch('/admin/generate-key', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ type })
+  }).then(r => r.json());
+  genKey = r.key || '';
+  const el = document.getElementById('genKeyOutput');
+  el.classList.remove('empty');
+  el.textContent = genKey;
+  document.getElementById('copyGenBtn').disabled = false;
+}
+
+function copyGenKey() {
+  if (!genKey) return;
+  navigator.clipboard.writeText(genKey).then(() => toast('Key copied to clipboard'));
+}
+
+async function verifyKey() {
+  const key = document.getElementById('verifyInput').value.trim();
+  if (!key) return;
+  const r = await fetch('/admin/verify-key', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ key })
+  }).then(r => r.json());
+  const el = document.getElementById('verifyResult');
+  el.style.display = '';
+  if (r.valid) {
+    const issued = new Date(r.issued).toLocaleString();
+    el.className = 'verify-result valid';
+    el.textContent = `Valid ${r.type} license — issued ${issued}`;
+  } else {
+    el.className = 'verify-result invalid';
+    el.textContent = 'Invalid or tampered license key.';
+  }
+}
+
+async function loadStripeStatus() {
+  const r = await fetch('/admin/config').then(r => r.json()).catch(() => null);
+  if (!r) return;
+  const el = document.getElementById('stripeStatus');
+  el.innerHTML = [
+    `<div style="margin-bottom:8px"><span style="font-size:13px;color:var(--text2)">Secret Key: </span><span style="font-size:13px">${r.stripeKey || '<em style="color:var(--text3)">not set</em>'}</span></div>`,
+    `<div><span style="font-size:13px;color:var(--text2)">Webhook Secret: </span><span style="font-size:13px">${r.webhookSecret || '<em style="color:var(--text3)">not set</em>'}</span></div>`
+  ].join('');
+}
+
+async function saveStripe() {
+  const stripeKey = document.getElementById('stripeKeyInput').value.trim();
+  const webhookSecret = document.getElementById('webhookInput').value.trim();
+  if (!stripeKey && !webhookSecret) { toast('Nothing to save.'); return; }
+  await fetch('/admin/save-config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ stripeKey, webhookSecret })
+  });
+  document.getElementById('stripeKeyInput').value = '';
+  document.getElementById('webhookInput').value = '';
+  toast('Stripe config saved.');
+  loadStripeStatus();
+}
+
+async function saveLicenseSecret() {
+  const licenseSecret = document.getElementById('licenseSecretInput').value.trim();
+  if (!licenseSecret) { toast('Enter a secret first.'); return; }
+  await fetch('/admin/save-config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ licenseSecret })
+  });
+  document.getElementById('licenseSecretInput').value = '';
+  toast('License secret saved.');
+}
+
+function confirmLogout() {
+  if (!confirm('Sign out of Meeto?')) return;
+  fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/');
+}
+
+loadStats();
+</script>
+</body>
+</html>
