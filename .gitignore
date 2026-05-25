@@ -1,8 +1,6 @@
 node_modules/
-.env
+data/
 *.log
-meetings.sqlite
-.msft-tokens.json
-documents/
 dist/
 out/
+.env

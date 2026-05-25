@@ -158,6 +158,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <button class="nav-item" onclick="showPage('stripe', this)">
       <span class="nav-icon">💳</span> Stripe
     </button>
+    <button class="nav-item" onclick="showPage('users', this)">
+      <span class="nav-icon">👥</span> Users
+    </button>
     <button class="nav-item" onclick="showPage('settings', this)">
       <span class="nav-icon">⚙️</span> Settings
     </button>
@@ -232,6 +235,13 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       </div>
     </div>
 
+    <!-- Users -->
+    <div class="page" id="page-users">
+      <h2>Users</h2>
+      <p class="page-sub">All registered accounts. Grant licenses or view trial status.</p>
+      <div id="usersTable">Loading…</div>
+    </div>
+
     <!-- Stripe -->
     <div class="page" id="page-stripe">
       <h2>Stripe</h2>
@@ -293,6 +303,7 @@ function showPage(name, btn) {
   btn.classList.add('active');
   if (name === 'overview') loadStats();
   if (name === 'stripe') loadStripeStatus();
+  if (name === 'users') loadUsers();
 }
 
 function toast(msg, dur = 2500) {
@@ -403,6 +414,38 @@ async function saveLicenseSecret() {
 function confirmLogout() {
   if (!confirm('Sign out of Meeto?')) return;
   fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/');
+}
+
+async function loadUsers() {
+  const users = await fetch('/admin/users').then(r => r.json()).catch(() => []);
+  const el = document.getElementById('usersTable');
+  if (!users.length) { el.innerHTML = '<p style="color:var(--text3);font-size:14px">No users yet.</p>'; return; }
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="color:var(--text3);text-align:left">
+      <th style="padding:8px 12px;border-bottom:1px solid var(--border)">Email</th>
+      <th style="padding:8px 12px;border-bottom:1px solid var(--border)">Tier</th>
+      <th style="padding:8px 12px;border-bottom:1px solid var(--border)">Trial used</th>
+      <th style="padding:8px 12px;border-bottom:1px solid var(--border)">Joined</th>
+      <th style="padding:8px 12px;border-bottom:1px solid var(--border)">Actions</th>
+    </tr></thead>
+    <tbody>
+      ${users.map(u => `<tr>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${u.email}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)"><span class="pill ${u.tier==='paid'?'ok':'warn'}">${u.tier}</span>${u.dataDeleted?'<span class="pill bad" style="margin-left:4px">deleted</span>':''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${Math.round((u.trialSecondsUsed||0)/60)} min</td>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${u.createdAt?new Date(u.createdAt).toLocaleDateString():''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
+          ${u.tier!=='paid'?`<button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="grantLicense(${u.id},'lifetime')">Grant lifetime</button>`:''}
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function grantLicense(userId, type) {
+  const r = await fetch('/admin/grant-license', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ targetUserId: userId, licenseType: type }) }).then(r=>r.json());
+  toast('License granted — key: ' + r.key.substring(0, 24) + '…');
+  loadUsers();
 }
 
 loadStats();

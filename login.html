@@ -13,61 +13,30 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 @media (prefers-color-scheme: light) {
   :root { --bg: #f8f8f7; --surface: #ffffff; --border: rgba(0,0,0,0.12); --text: #1a1a18; --text2: #6b6b67; --blue: #2563eb; --blue-bg: #dbeafe; --danger: #dc2626; }
 }
-body {
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-}
-.card {
-  background: var(--surface);
-  border: 0.5px solid var(--border);
-  border-radius: 16px;
-  padding: 40px 36px;
-  width: 100%;
-  max-width: 360px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-}
+body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.card { background: var(--surface); border: 0.5px solid var(--border); border-radius: 16px; padding: 40px 36px; width: 100%; max-width: 360px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
 .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; justify-content: center; }
 .logo-icon { font-size: 28px; }
 .logo-name { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
 h2 { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; text-align: center; }
 .subtitle { font-size: 13px; color: var(--text2); text-align: center; margin-bottom: 28px; line-height: 1.5; }
 label { font-size: 12px; font-weight: 600; color: var(--text2); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
-input[type=password], input[type=text] {
-  width: 100%;
-  padding: 11px 13px;
-  font-size: 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-family: inherit;
-  margin-bottom: 16px;
-  outline: none;
-  transition: border-color 0.15s;
+input[type=password], input[type=text], input[type=email] {
+  width: 100%; padding: 11px 13px; font-size: 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-family: inherit; margin-bottom: 16px; outline: none; transition: border-color 0.15s;
 }
 input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
-.btn {
-  width: 100%;
-  padding: 12px;
-  background: var(--blue);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: opacity 0.15s, transform 0.1s;
-}
+.btn { width: 100%; padding: 12px; background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; transition: opacity 0.15s, transform 0.1s; }
 .btn:hover { opacity: 0.9; }
 .btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .error { color: var(--danger); font-size: 12px; margin-top: -10px; margin-bottom: 14px; display: none; }
 .hint { font-size: 11px; color: var(--text2); text-align: center; margin-top: 18px; line-height: 1.6; }
-.hint a { color: var(--blue); text-decoration: none; }
+.hint a { color: var(--blue); text-decoration: none; cursor: pointer; }
+.tab-row { display: flex; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; overflow: hidden; }
+.tab { flex: 1; padding: 9px; font-size: 13px; font-weight: 600; background: none; border: none; cursor: pointer; color: var(--text2); font-family: inherit; transition: background 0.15s, color 0.15s; }
+.tab.active { background: var(--blue); color: #fff; }
 </style>
 </head>
 <body>
@@ -76,78 +45,96 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
     <span class="logo-icon">☄️</span>
     <span class="logo-name">Meeto</span>
   </div>
+
+  <div class="tab-row">
+    <button class="tab active" id="tabLogin" onclick="switchTab('login')">Sign in</button>
+    <button class="tab" id="tabSignup" onclick="switchTab('signup')">Create account</button>
+  </div>
+
+  <!-- Login -->
   <div id="loginView">
     <h2>Welcome back</h2>
-    <p class="subtitle">Enter your password to access Meeto.</p>
-    <label for="pwd">Password</label>
-    <input type="password" id="pwd" placeholder="Enter password" autofocus onkeydown="if(event.key==='Enter')doLogin()" />
-    <p class="error" id="loginErr">Incorrect password. Try again.</p>
-    <button class="btn" onclick="doLogin()">Sign in</button>
+    <p class="subtitle">Sign in to your Meeto account.</p>
+    <label for="loginEmail">Email</label>
+    <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()" />
+    <label for="loginPwd">Password</label>
+    <input type="password" id="loginPwd" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
+    <p class="error" id="loginErr">Incorrect email or password.</p>
+    <button class="btn" onclick="doLogin()" id="loginBtn">Sign in</button>
     <p class="hint"><a href="/landing" target="_blank">Learn about Meeto</a></p>
   </div>
-  <div id="setupView" style="display:none">
-    <h2>Set your password</h2>
-    <p class="subtitle">Choose a password to protect your Meeto session. This is stored locally — only you can unlock it.</p>
-    <label for="newPwd">Password</label>
-    <input type="password" id="newPwd" placeholder="At least 6 characters" onkeydown="if(event.key==='Enter')document.getElementById('confirmPwd').focus()" />
-    <label for="confirmPwd">Confirm password</label>
-    <input type="password" id="confirmPwd" placeholder="Re-enter password" onkeydown="if(event.key==='Enter')doSetup()" />
-    <p class="error" id="setupErr">Passwords don't match.</p>
-    <button class="btn" onclick="doSetup()">Create password &amp; continue</button>
-    <p class="hint">You'll enter this password each time you open Meeto.</p>
+
+  <!-- Sign up -->
+  <div id="signupView" style="display:none">
+    <h2>Start your free trial</h2>
+    <p class="subtitle">20 minutes free — no credit card required.</p>
+    <label for="signupEmail">Email</label>
+    <input type="email" id="signupEmail" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('signupPwd').focus()" />
+    <label for="signupPwd">Password</label>
+    <input type="password" id="signupPwd" placeholder="At least 6 characters" autocomplete="new-password" onkeydown="if(event.key==='Enter')document.getElementById('signupConfirm').focus()" />
+    <label for="signupConfirm">Confirm password</label>
+    <input type="password" id="signupConfirm" placeholder="Re-enter password" autocomplete="new-password" onkeydown="if(event.key==='Enter')doSignup()" />
+    <p class="error" id="signupErr">Passwords don't match.</p>
+    <button class="btn" onclick="doSignup()" id="signupBtn">Create account &amp; start trial</button>
+    <p class="hint">By signing up you agree to our <a href="/landing" target="_blank">terms</a>. We'll keep your email for product updates.</p>
   </div>
 </div>
+
 <script>
-async function init() {
-  const r = await fetch('/auth/status').then(r => r.json()).catch(() => ({ needsSetup: false }));
-  if (r.needsSetup) {
-    document.getElementById('loginView').style.display = 'none';
-    document.getElementById('setupView').style.display = '';
-    document.getElementById('newPwd').focus();
-  }
+function switchTab(tab) {
+  const isLogin = tab === 'login';
+  document.getElementById('loginView').style.display = isLogin ? '' : 'none';
+  document.getElementById('signupView').style.display = isLogin ? 'none' : '';
+  document.getElementById('tabLogin').classList.toggle('active', isLogin);
+  document.getElementById('tabSignup').classList.toggle('active', !isLogin);
+  document.getElementById(isLogin ? 'loginEmail' : 'signupEmail').focus();
 }
 
 async function doLogin() {
-  const pwd = document.getElementById('pwd').value;
-  const btn = document.querySelector('#loginView .btn');
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPwd').value;
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginErr');
+  err.style.display = 'none';
   btn.disabled = true; btn.textContent = 'Signing in…';
   const r = await fetch('/auth/login', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ password: pwd })
+    body: JSON.stringify({ email, password })
   }).then(r => r.json()).catch(() => ({ error: 'Network error' }));
   if (r.ok) {
-    window.location.reload();
+    window.location.href = '/';
   } else {
-    document.getElementById('loginErr').style.display = '';
+    err.textContent = r.error || 'Incorrect email or password.';
+    err.style.display = '';
     btn.disabled = false; btn.textContent = 'Sign in';
-    document.getElementById('pwd').value = '';
-    document.getElementById('pwd').focus();
+    document.getElementById('loginPwd').value = '';
+    document.getElementById('loginPwd').focus();
   }
 }
 
-async function doSetup() {
-  const pwd = document.getElementById('newPwd').value;
-  const conf = document.getElementById('confirmPwd').value;
-  const errEl = document.getElementById('setupErr');
-  errEl.style.display = 'none';
-  if (pwd.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
-  if (pwd !== conf) { errEl.textContent = "Passwords don't match."; errEl.style.display = ''; return; }
-  const btn = document.querySelector('#setupView .btn');
-  btn.disabled = true; btn.textContent = 'Creating…';
-  const r = await fetch('/auth/setup', {
+async function doSignup() {
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPwd').value;
+  const confirm = document.getElementById('signupConfirm').value;
+  const btn = document.getElementById('signupBtn');
+  const err = document.getElementById('signupErr');
+  err.style.display = 'none';
+  if (!email || !email.includes('@')) { err.textContent = 'Enter a valid email address.'; err.style.display = ''; return; }
+  if (password.length < 6) { err.textContent = 'Password must be at least 6 characters.'; err.style.display = ''; return; }
+  if (password !== confirm) { err.textContent = "Passwords don't match."; err.style.display = ''; return; }
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  const r = await fetch('/auth/register', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ password: pwd })
+    body: JSON.stringify({ email, password })
   }).then(r => r.json()).catch(() => ({ error: 'Network error' }));
   if (r.ok) {
-    window.location.reload();
+    window.location.href = '/';
   } else {
-    errEl.textContent = r.error || 'Setup failed.';
-    errEl.style.display = '';
-    btn.disabled = false; btn.textContent = 'Create password & continue';
+    err.textContent = r.error || 'Registration failed.';
+    err.style.display = '';
+    btn.disabled = false; btn.textContent = 'Create account & start trial';
   }
 }
-
-init();
 </script>
 </body>
 </html>

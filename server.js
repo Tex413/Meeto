@@ -2,12 +2,21 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
 
-const PORT = 7432;
-const ENV_FILE = path.join(__dirname, '.env');
-const DB_FILE = path.join(__dirname, 'meetings.sqlite');
-const DOCS_DIR = path.join(__dirname, 'documents');
-const LOG_FILE = path.join(__dirname, 'meeto.log');
+const PORT = parseInt(process.env.PORT || '7432');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DB_FILE = path.join(DATA_DIR, 'meeto.sqlite');
+const DOCS_DIR = path.join(DATA_DIR, 'documents');
+const LOG_FILE = path.join(DATA_DIR, 'meeto.log');
+const ENV_FILE = path.join(DATA_DIR, '.env');
+
+const TRIAL_SECONDS = 20 * 60;
+const TRIAL_MAX_DOCS = 2;
+const TRIAL_DELETE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
 
 function log(...args) {
   const line = new Date().toISOString() + ' ' + args.join(' ');
@@ -17,104 +26,133 @@ function log(...args) {
 process.on('uncaughtException', e => log('UNCAUGHT', e.stack || e.message));
 process.on('unhandledRejection', e => log('UNHANDLED', e?.stack || e));
 
-// ── sqlite setup ──────────────────────────────────────────────
+// ── sqlite ─────────────────────────────────────────────────────
 const initSqlJs = require('sql.js');
 let db = null;
 
 async function initDb() {
   const SQL = await initSqlJs();
   if (fs.existsSync(DB_FILE)) {
-    const buf = fs.readFileSync(DB_FILE);
-    db = new SQL.Database(buf);
+    db = new SQL.Database(fs.readFileSync(DB_FILE));
   } else {
     db = new SQL.Database();
   }
-  db.run(`
-    CREATE TABLE IF NOT EXISTS meetings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT,
-      started_at TEXT,
-      ended_at TEXT,
-      transcript TEXT,
-      word_count INTEGER,
-      total_cards INTEGER,
-      context_used TEXT,
-      todos TEXT
-    )
-  `);
-  // add todos column if upgrading from older db
-  try { db.run('ALTER TABLE meetings ADD COLUMN todos TEXT'); } catch(e) {}
-  db.run(`
-    CREATE TABLE IF NOT EXISTS cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meeting_id INTEGER,
-      captured_at TEXT,
-      tag TEXT,
-      title TEXT,
-      body TEXT,
-      transcript_snapshot TEXT,
-      FOREIGN KEY(meeting_id) REFERENCES meetings(id)
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      file_type TEXT,
-      size INTEGER,
-      char_count INTEGER,
-      chunk_count INTEGER,
-      uploaded_at TEXT
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS document_chunks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      doc_id INTEGER,
-      chunk_index INTEGER,
-      text TEXT,
-      embedding TEXT,
-      FOREIGN KEY(doc_id) REFERENCES documents(id)
-    )
-  `);
-  if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
+
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    pwd_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'trial',
+    trial_seconds_used INTEGER NOT NULL DEFAULT 0,
+    trial_docs_uploaded INTEGER NOT NULL DEFAULT 0,
+    trial_expired_at TEXT,
+    data_deleted_at TEXT,
+    license_key TEXT,
+    license_type TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY,
+    ai_provider TEXT NOT NULL DEFAULT 'openai',
+    ai_model TEXT NOT NULL DEFAULT 'gpt-4o',
+    anthropic_key TEXT,
+    openai_key TEXT,
+    msft_client_id TEXT,
+    msft_tokens TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS meetings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    title TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    transcript TEXT,
+    word_count INTEGER,
+    total_cards INTEGER,
+    context_used TEXT,
+    todos TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id INTEGER,
+    captured_at TEXT,
+    tag TEXT,
+    title TEXT,
+    body TEXT,
+    transcript_snapshot TEXT,
+    FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    name TEXT,
+    file_type TEXT,
+    size INTEGER,
+    char_count INTEGER,
+    chunk_count INTEGER,
+    uploaded_at TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS document_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id INTEGER,
+    chunk_index INTEGER,
+    text TEXT,
+    embedding TEXT,
+    FOREIGN KEY(doc_id) REFERENCES documents(id)
+  )`);
+
+  // migrations for existing DBs
+  const migrate = sql => { try { db.run(sql); } catch(e) {} };
+  migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
+  migrate('ALTER TABLE documents ADD COLUMN user_id INTEGER DEFAULT 1');
+  migrate('ALTER TABLE meetings ADD COLUMN todos TEXT');
+
   saveDb();
   log('Database ready:', DB_FILE);
 }
 
 function saveDb() {
-  const data = db.export();
-  fs.writeFileSync(DB_FILE, Buffer.from(data));
+  fs.writeFileSync(DB_FILE, Buffer.from(db.export()));
 }
 
-// ── session auth ──────────────────────────────────────────────
-const sessions = new Map(); // token → expiry ms
-const SESSION_MS = 8 * 60 * 60 * 1000; // 8 hours, sliding
+function dbGet(sql, params = []) {
+  const r = db.exec(sql.replace(/\?/g, () => {
+    const v = params.shift();
+    if (v === null || v === undefined) return 'NULL';
+    if (typeof v === 'number') return v;
+    return "'" + String(v).replace(/'/g, "''") + "'";
+  }));
+  if (!r.length || !r[0].values.length) return null;
+  const row = {}; r[0].columns.forEach((c, i) => row[c] = r[0].values[0][i]);
+  return row;
+}
+
+// ── session auth ───────────────────────────────────────────────
+const sessions = new Map(); // token → { userId, expiry }
+const SESSION_MS = 8 * 60 * 60 * 1000;
 
 function hashPwd(pwd) {
   return crypto.createHash('sha256').update('meeto-v1:' + pwd).digest('hex');
 }
-function loadPwdHash() {
-  try { const c = fs.readFileSync(ENV_FILE, 'utf8'); const m = c.match(/APP_PWD_HASH=(.+)/); return m ? m[1].trim() : ''; } catch { return ''; }
-}
-function savePwdHash(h) {
-  let c = ''; try { c = fs.readFileSync(ENV_FILE, 'utf8'); } catch(e) {}
-  c = /APP_PWD_HASH=/.test(c) ? c.replace(/APP_PWD_HASH=.+/, 'APP_PWD_HASH=' + h) : c.trimEnd() + '\nAPP_PWD_HASH=' + h + '\n';
-  fs.writeFileSync(ENV_FILE, c, 'utf8');
-}
-function makeToken() {
+function makeToken(userId) {
   const t = crypto.randomBytes(32).toString('hex');
-  sessions.set(t, Date.now() + SESSION_MS);
+  sessions.set(t, { userId, expiry: Date.now() + SESSION_MS });
   return t;
 }
 function checkToken(req) {
   const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
   const token = m ? m[1] : (req.headers.authorization || '').replace('Bearer ', '');
-  if (!token) return false;
-  const exp = sessions.get(token);
-  if (!exp || Date.now() > exp) { sessions.delete(token); return false; }
-  sessions.set(token, Date.now() + SESSION_MS); // sliding window
-  return true;
+  if (!token) return null;
+  const s = sessions.get(token);
+  if (!s || Date.now() > s.expiry) { sessions.delete(token); return null; }
+  s.expiry = Date.now() + SESSION_MS;
+  return s.userId;
 }
 function setSessionCookie(res, token) {
   res.setHeader('Set-Cookie', `meeto_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}`);
@@ -123,25 +161,63 @@ function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', 'meeto_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
 }
 
-// ── env helpers ───────────────────────────────────────────────
-function loadEnv() {
-  try {
-    const c = fs.readFileSync(ENV_FILE, 'utf8');
-    const m = c.match(/ANTHROPIC_API_KEY\s*=\s*(.+)/);
-    return m ? m[1].trim() : '';
-  } catch { return ''; }
-}
-function saveEnv(key) {
-  fs.writeFileSync(ENV_FILE, `ANTHROPIC_API_KEY=${key}\n`, 'utf8');
+// ── trial helpers ──────────────────────────────────────────────
+function trialStatus(user) {
+  if (user.tier === 'paid') return { ok: true, tier: 'paid' };
+  const secondsLeft = Math.max(0, TRIAL_SECONDS - (user.trial_seconds_used || 0));
+  const expired = secondsLeft === 0;
+  return { ok: !expired, tier: 'trial', secondsLeft, secondsUsed: user.trial_seconds_used || 0, secondsTotal: TRIAL_SECONDS };
 }
 
-// ── request helpers ───────────────────────────────────────────
+function markTrialExpired(userId) {
+  const u = dbGet(`SELECT trial_expired_at FROM users WHERE id = ${userId}`);
+  if (!u || u.trial_expired_at) return;
+  db.run(`UPDATE users SET trial_expired_at = '${new Date().toISOString()}' WHERE id = ${userId}`);
+  saveDb();
+}
+
+function cleanupExpiredTrials() {
+  const cutoff = new Date(Date.now() - TRIAL_DELETE_AFTER_MS).toISOString();
+  const r = db.exec(`SELECT id FROM users WHERE tier='trial' AND trial_seconds_used >= ${TRIAL_SECONDS} AND data_deleted_at IS NULL AND trial_expired_at < '${cutoff}'`);
+  if (!r.length || !r[0].values.length) return;
+  for (const [userId] of r[0].values) {
+    const mids = db.exec(`SELECT id FROM meetings WHERE user_id = ${userId}`);
+    if (mids.length && mids[0].values.length) {
+      for (const [mid] of mids[0].values) db.run(`DELETE FROM cards WHERE meeting_id = ${mid}`);
+    }
+    db.run(`DELETE FROM meetings WHERE user_id = ${userId}`);
+    const dids = db.exec(`SELECT id FROM documents WHERE user_id = ${userId}`);
+    if (dids.length && dids[0].values.length) {
+      for (const [did] of dids[0].values) db.run(`DELETE FROM document_chunks WHERE doc_id = ${did}`);
+    }
+    db.run(`DELETE FROM documents WHERE user_id = ${userId}`);
+    db.run(`UPDATE users SET data_deleted_at = '${new Date().toISOString()}' WHERE id = ${userId}`);
+    log('Deleted expired trial data for user', userId);
+  }
+  saveDb();
+}
+setInterval(cleanupExpiredTrials, 60 * 60 * 1000);
+
+// ── env helpers ────────────────────────────────────────────────
+function loadEnvVar(varName) {
+  try { const c = fs.readFileSync(ENV_FILE, 'utf8'); const m = c.match(new RegExp(varName + '\\s*=\\s*(.+)')); return m ? m[1].trim() : ''; } catch { return ''; }
+}
+function writeEnvVar(varName, value) {
+  let c = ''; try { c = fs.readFileSync(ENV_FILE, 'utf8'); } catch(e) {}
+  const re = new RegExp(varName + '\\s*=.*');
+  c = re.test(c) ? c.replace(re, varName + '=' + value) : c.trimEnd() + '\n' + varName + '=' + value + '\n';
+  fs.writeFileSync(ENV_FILE, c, 'utf8');
+}
+
+// ── request helpers ────────────────────────────────────────────
 function readBody(req) {
-  return new Promise((res, rej) => {
-    let b = '';
-    req.on('data', d => b += d);
-    req.on('end', () => res(b));
-    req.on('error', rej);
+  return new Promise((resolve, reject) => {
+    let b = ''; req.on('data', d => b += d); req.on('end', () => resolve(b)); req.on('error', reject);
+  });
+}
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; req.on('data', d => chunks.push(d)); req.on('end', () => resolve(Buffer.concat(chunks))); req.on('error', reject);
   });
 }
 function json(res, code, obj) {
@@ -149,66 +225,124 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// ── Whisper transcription ──────────────────────────────────────
-let _whisper = null;
-let _whisperLoading = false;
-
-async function getWhisper() {
-  if (_whisper) return _whisper;
-  if (_whisperLoading) {
-    await new Promise(resolve => {
-      const check = setInterval(() => { if (!_whisperLoading) { clearInterval(check); resolve(); } }, 200);
-    });
-    return _whisper;
+// ── OpenAI Whisper STT ─────────────────────────────────────────
+function float32ToWav(samples, sampleRate) {
+  const int16 = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
   }
-  _whisperLoading = true;
-  log('Loading Whisper model (first run downloads ~150 MB)...');
-  try {
-    const { pipeline } = await import('@xenova/transformers');
-    _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en');
-    log('Whisper model ready.');
-  } finally {
-    _whisperLoading = false;
-  }
-  return _whisper;
+  const pcm = Buffer.from(int16.buffer);
+  const hdr = Buffer.alloc(44);
+  hdr.write('RIFF', 0); hdr.writeUInt32LE(36 + pcm.length, 4); hdr.write('WAVE', 8);
+  hdr.write('fmt ', 12); hdr.writeUInt32LE(16, 16); hdr.writeUInt16LE(1, 20);
+  hdr.writeUInt16LE(1, 22); hdr.writeUInt32LE(sampleRate, 24);
+  hdr.writeUInt32LE(sampleRate * 2, 28); hdr.writeUInt16LE(2, 32); hdr.writeUInt16LE(16, 34);
+  hdr.write('data', 36); hdr.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([hdr, pcm]);
 }
 
-// ── RAG / embeddings ──────────────────────────────────────────
-let _embedder = null;
-let _embedderLoading = false;
+function openaiWhisper(wavBuffer, openaiKey) {
+  return new Promise((resolve, reject) => {
+    const boundary = 'meeto-' + Date.now();
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`),
+      wavBuffer,
+      Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--${boundary}--\r\n`)
+    ]);
+    const opts = {
+      hostname: 'api.openai.com', path: '/v1/audio/transcriptions', method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + openaiKey,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length
+      }
+    };
+    const req = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d).text || ''); } catch(e) { reject(new Error(d)); } });
+    });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
 
+// ── AI proxy (Anthropic + OpenAI, unified Anthropic response format) ──
+function proxyAnthropic(body, apiKey) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', 'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body)
+      }
+    };
+    const req = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+
+function proxyOpenAI(anthropicBody, openaiKey, model) {
+  return new Promise((resolve, reject) => {
+    const req = JSON.parse(anthropicBody);
+    const messages = [];
+    if (req.system) messages.push({ role: 'system', content: req.system });
+    (req.messages || []).forEach(m => messages.push(m));
+    const payload = JSON.stringify({ model, messages, max_tokens: req.max_tokens || 1024 });
+    const opts = {
+      hostname: 'api.openai.com', path: '/v1/chat/completions', method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + openaiKey, 'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    };
+    const r = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const oai = JSON.parse(d);
+          const text = oai.choices?.[0]?.message?.content || '';
+          const anthropicRes = {
+            id: oai.id || 'openai', type: 'message', role: 'assistant',
+            content: [{ type: 'text', text }], model: oai.model || model,
+            usage: { input_tokens: oai.usage?.prompt_tokens || 0, output_tokens: oai.usage?.completion_tokens || 0 }
+          };
+          resolve({ status: oai.error ? 400 : 200, body: JSON.stringify(anthropicRes) });
+        } catch(e) { reject(e); }
+      });
+    });
+    r.on('error', reject); r.write(payload); r.end();
+  });
+}
+
+// ── RAG / embeddings ───────────────────────────────────────────
+let _embedder = null, _embedderLoading = false;
 async function getEmbedder() {
   if (_embedder) return _embedder;
   if (_embedderLoading) {
-    await new Promise(resolve => {
-      const check = setInterval(() => { if (!_embedderLoading) { clearInterval(check); resolve(); } }, 200);
-    });
+    await new Promise(resolve => { const t = setInterval(() => { if (!_embedderLoading) { clearInterval(t); resolve(); } }, 200); });
     return _embedder;
   }
   _embedderLoading = true;
-  log('Loading embedding model (first run downloads ~80 MB)...');
+  log('Loading embedding model…');
   try {
     const { pipeline } = await import('@xenova/transformers');
     _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { quantized: true });
     log('Embedding model ready.');
-  } finally {
-    _embedderLoading = false;
-  }
+  } finally { _embedderLoading = false; }
   return _embedder;
 }
-
 async function computeEmbedding(text) {
-  const embedder = await getEmbedder();
-  const out = await embedder(text, { pooling: 'mean', normalize: true });
+  const e = await getEmbedder();
+  const out = await e(text, { pooling: 'mean', normalize: true });
   return Array.from(out.data);
 }
-
 function cosineSim(a, b) {
   let dot = 0, ma = 0, mb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; ma += a[i]*a[i]; mb += b[i]*b[i]; }
   return (ma && mb) ? dot / (Math.sqrt(ma) * Math.sqrt(mb)) : 0;
 }
-
 function chunkText(text, size = 400, overlap = 50) {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const chunks = [];
@@ -219,73 +353,37 @@ function chunkText(text, size = 400, overlap = 50) {
   }
   return chunks;
 }
-
 async function extractText(buffer, ext) {
   if (ext === 'txt' || ext === 'md') return buffer.toString('utf8');
   if (ext === 'html' || ext === 'htm') {
     return buffer.toString('utf8')
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-      .replace(/&#?\w+;/g, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#?\w+;/g, ' ')
       .replace(/\s{2,}/g, ' ').trim();
   }
-  if (ext === 'pdf') {
-    const pdfParse = require('pdf-parse');
-    return (await pdfParse(buffer)).text;
-  }
-  if (ext === 'docx') {
-    const mammoth = require('mammoth');
-    return (await mammoth.extractRawText({ buffer })).value;
-  }
+  if (ext === 'pdf') { const p = require('pdf-parse'); return (await p(buffer)).text; }
+  if (ext === 'docx') { const m = require('mammoth'); return (await m.extractRawText({ buffer })).value; }
   throw new Error('Unsupported type: ' + ext);
 }
 
-// ── Microsoft Graph helpers ───────────────────────────────────
-const MSFT_TOKENS_FILE = path.join(__dirname, '.msft-tokens.json');
-
-function loadMsftTokens() {
-  try { return JSON.parse(fs.readFileSync(MSFT_TOKENS_FILE, 'utf8')); } catch(e) { return null; }
-}
-function saveMsftTokens(t) { fs.writeFileSync(MSFT_TOKENS_FILE, JSON.stringify(t), 'utf8'); }
-
-function loadMsftClientId() {
-  try {
-    const c = fs.readFileSync(ENV_FILE, 'utf8');
-    const m = c.match(/MSFT_CLIENT_ID\s*=\s*(.+)/);
-    return m ? m[1].trim() : '';
-  } catch { return ''; }
-}
-function saveMsftClientId(id) {
-  let c = '';
-  try { c = fs.readFileSync(ENV_FILE, 'utf8'); } catch(e) {}
-  if (/MSFT_CLIENT_ID\s*=/.test(c)) {
-    c = c.replace(/MSFT_CLIENT_ID\s*=\s*.+/, 'MSFT_CLIENT_ID=' + id);
-  } else {
-    c = c.trimEnd() + '\nMSFT_CLIENT_ID=' + id + '\n';
-  }
-  fs.writeFileSync(ENV_FILE, c, 'utf8');
-}
-
-function msftFormPost(path, params) {
+// ── Microsoft Graph helpers ────────────────────────────────────
+function msftFormPost(apiPath, params) {
   return new Promise((resolve, reject) => {
-    const https = require('https');
-    const body = Object.entries(params).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+    const body = Object.entries(params).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
     const opts = {
-      hostname: 'login.microsoftonline.com', path, method: 'POST',
+      hostname: 'login.microsoftonline.com', path: apiPath, method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
     };
     const req = https.request(opts, res => {
-      let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
     });
     req.on('error', reject); req.write(body); req.end();
   });
 }
-
 function graphRequest(tokens, method, apiPath, body) {
   return new Promise((resolve, reject) => {
-    const https = require('https');
     const payload = body ? JSON.stringify(body) : null;
     const opts = {
       hostname: 'graph.microsoft.com', path: '/v1.0' + apiPath, method,
@@ -302,36 +400,36 @@ function graphRequest(tokens, method, apiPath, body) {
 const graphGet = (t, p) => graphRequest(t, 'GET', p, null);
 const graphPost = (t, p, b) => graphRequest(t, 'POST', p, b);
 
-async function getValidMsftTokens() {
-  let tokens = loadMsftTokens();
-  if (!tokens) return null;
+async function getValidMsftTokens(userId) {
+  const s = dbGet(`SELECT msft_tokens, msft_client_id FROM user_settings WHERE user_id = ${userId}`);
+  if (!s || !s.msft_tokens) return null;
+  let tokens; try { tokens = JSON.parse(s.msft_tokens); } catch(e) { return null; }
   const expiresAt = (tokens.acquired_at || 0) + ((tokens.expires_in || 3600) - 300) * 1000;
   if (Date.now() > expiresAt && tokens.refresh_token) {
     try {
-      const clientId = loadMsftClientId();
       const refreshed = await msftFormPost('/common/oauth2/v2.0/token', {
-        grant_type: 'refresh_token', client_id: clientId,
+        grant_type: 'refresh_token', client_id: s.msft_client_id,
         refresh_token: tokens.refresh_token, scope: 'Tasks.ReadWrite offline_access'
       });
       if (refreshed.access_token) {
         tokens = { ...refreshed, acquired_at: Date.now() };
-        saveMsftTokens(tokens);
+        saveMsftTokens(userId, tokens);
       }
-    } catch(e) { log('MSFT token refresh error:', e.message); }
+    } catch(e) { log('MSFT refresh error:', e.message); }
   }
   return tokens;
 }
+function saveMsftTokens(userId, tokens) {
+  ensureUserSettings(userId);
+  db.run(`UPDATE user_settings SET msft_tokens = '${JSON.stringify(tokens).replace(/'/g, "''")}' WHERE user_id = ${userId}`);
+  saveDb();
+}
+function ensureUserSettings(userId) {
+  const s = dbGet(`SELECT user_id FROM user_settings WHERE user_id = ${userId}`);
+  if (!s) db.run(`INSERT INTO user_settings (user_id) VALUES (${userId})`);
+}
 
-// ── Stripe / license helpers ──────────────────────────────────
-function loadEnvVar(varName) {
-  try { const c = fs.readFileSync(ENV_FILE, 'utf8'); const m = c.match(new RegExp(varName + '\\s*=\\s*(.+)')); return m ? m[1].trim() : ''; } catch { return ''; }
-}
-function writeEnvVar(varName, value) {
-  let c = ''; try { c = fs.readFileSync(ENV_FILE, 'utf8'); } catch(e) {}
-  const re = new RegExp(varName + '\\s*=.*');
-  c = re.test(c) ? c.replace(re, varName + '=' + value) : c.trimEnd() + '\n' + varName + '=' + value + '\n';
-  fs.writeFileSync(ENV_FILE, c, 'utf8');
-}
+// ── Stripe / license helpers ───────────────────────────────────
 function generateLicenseKey(type) {
   const secret = loadEnvVar('LICENSE_SECRET') || 'meeto-dev-secret';
   const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
@@ -349,35 +447,68 @@ function verifyLicenseKey(key) {
     return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   } catch(e) { return null; }
 }
-function readRawBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on('data', d => chunks.push(d));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
 
-// ── server ────────────────────────────────────────────────────
+// ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
 
-  // ── public routes (no auth required) ─────────────────────────
+  // ── public routes ────────────────────────────────────────────
   if (req.method === 'GET' && url === '/landing') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
+  if (req.method === 'GET' && url === '/auth/status') {
+    const userId = checkToken(req);
+    return json(res, 200, { authenticated: !!userId });
+  }
+
+  if (req.method === 'POST' && url === '/auth/register') {
+    const body = JSON.parse(await readBody(req));
+    const { email, password } = body;
+    if (!email || !email.includes('@')) return json(res, 400, { error: 'Valid email required' });
+    if (!password || password.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
+    const existing = dbGet(`SELECT id FROM users WHERE email = '${email.replace(/'/g, "''").toLowerCase()}'`);
+    if (existing) return json(res, 409, { error: 'Email already registered' });
+    const hash = hashPwd(password);
+    const emailSafe = email.toLowerCase().replace(/'/g, "''");
+    db.run(`INSERT INTO users (email, pwd_hash, created_at) VALUES ('${emailSafe}', '${hash}', '${new Date().toISOString()}')`);
+    saveDb();
+    const user = dbGet(`SELECT id FROM users WHERE email = '${emailSafe}'`);
+    const token = makeToken(user.id);
+    setSessionCookie(res, token);
+    log('New user registered:', email);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'POST' && url === '/auth/login') {
+    const body = JSON.parse(await readBody(req));
+    const emailSafe = (body.email || '').toLowerCase().replace(/'/g, "''");
+    const user = dbGet(`SELECT id, pwd_hash FROM users WHERE email = '${emailSafe}'`);
+    if (!user || hashPwd(body.password || '') !== user.pwd_hash) {
+      return json(res, 401, { error: 'Incorrect email or password' });
+    }
+    const token = makeToken(user.id);
+    setSessionCookie(res, token);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'POST' && url === '/auth/logout') {
+    const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
+    if (m) sessions.delete(m[1]);
+    clearSessionCookie(res);
+    return json(res, 200, { ok: true });
+  }
+
   // ── Checkout + Stripe webhook (public) ───────────────────────
   if (req.method === 'POST' && url === '/checkout/create') {
     const body = JSON.parse(await readBody(req));
-    const { plan } = body;
     const stripeKey = loadEnvVar('STRIPE_SECRET_KEY');
     if (!stripeKey) return json(res, 500, { error: 'Stripe not configured' });
     try {
       const Stripe = require('stripe');
       const stripe = Stripe(stripeKey);
-      const isAnnual = plan === 'annual';
+      const isAnnual = body.plan === 'annual';
       const session = await stripe.checkout.sessions.create({
         mode: isAnnual ? 'subscription' : 'payment',
         line_items: [{ price_data: {
@@ -390,24 +521,21 @@ const server = http.createServer(async (req, res) => {
         cancel_url: `http://localhost:${PORT}/checkout/cancel`
       });
       return json(res, 200, { url: session.url });
-    } catch(e) { log('Stripe error:', e.message); return json(res, 500, { error: e.message }); }
+    } catch(e) { return json(res, 500, { error: e.message }); }
   }
 
   if (req.method === 'GET' && url.startsWith('/checkout/success')) {
-    const params = new URLSearchParams((req.url.split('?')[1] || ''));
+    const params = new URLSearchParams(req.url.split('?')[1] || '');
     const sessionId = params.get('session_id') || '';
     const stripeKey = loadEnvVar('STRIPE_SECRET_KEY');
-    let licenseKey = '';
-    let planType = 'lifetime';
+    let licenseKey = '', planType = 'lifetime';
     if (stripeKey && sessionId) {
       try {
         const Stripe = require('stripe');
-        const stripe = Stripe(stripeKey);
-        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        const session = await Stripe(stripeKey).checkout.sessions.retrieve(sessionId);
         if (session.payment_status === 'paid' || session.status === 'complete') {
           planType = session.mode === 'subscription' ? 'annual' : 'lifetime';
           licenseKey = generateLicenseKey(planType);
-          log('License generated:', planType, licenseKey.substring(0, 20) + '...');
         }
       } catch(e) { log('Stripe success error:', e.message); }
     }
@@ -419,8 +547,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url === '/checkout/cancel') {
-    res.writeHead(302, { 'Location': '/landing#pricing' });
-    return res.end();
+    res.writeHead(302, { 'Location': '/landing#pricing' }); return res.end();
   }
 
   if (req.method === 'POST' && url === '/stripe/webhook') {
@@ -430,89 +557,72 @@ const server = http.createServer(async (req, res) => {
     if (stripeKey && webhookSecret) {
       try {
         const Stripe = require('stripe');
-        const stripe = Stripe(stripeKey);
-        const sig = req.headers['stripe-signature'];
-        const event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-        log('Stripe webhook event:', event.type);
-      } catch(e) { log('Stripe webhook verify error:', e.message); return json(res, 400, { error: e.message }); }
+        const event = Stripe(stripeKey).webhooks.constructEvent(rawBody, req.headers['stripe-signature'], webhookSecret);
+        log('Stripe webhook:', event.type);
+      } catch(e) { return json(res, 400, { error: e.message }); }
     }
     return json(res, 200, { received: true });
   }
 
-  if (req.method === 'GET' && url === '/auth/status') {
-    return json(res, 200, { needsSetup: !loadPwdHash(), authenticated: checkToken(req) });
-  }
-
-  if (req.method === 'POST' && url === '/auth/setup') {
-    const body = JSON.parse(await readBody(req));
-    if (loadPwdHash()) return json(res, 403, { error: 'Password already set' });
-    if (!body.password || body.password.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
-    savePwdHash(hashPwd(body.password));
-    const token = makeToken();
-    setSessionCookie(res, token);
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === 'POST' && url === '/auth/login') {
-    const body = JSON.parse(await readBody(req));
-    const hash = loadPwdHash();
-    if (!hash || hashPwd(body.password || '') !== hash) {
-      return json(res, 401, { error: 'Incorrect password' });
-    }
-    const token = makeToken();
-    setSessionCookie(res, token);
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === 'POST' && url === '/auth/logout') {
-    const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
-    if (m) sessions.delete(m[1]);
-    clearSessionCookie(res);
-    return json(res, 200, { ok: true });
-  }
-
-  // ── main app + all API routes require valid session ───────────
+  // ── main app ─────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
     if (!checkToken(req)) {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8'));
     }
-    const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    return res.end(html);
+    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'));
   }
 
-  if (!checkToken(req)) {
-    return json(res, 401, { error: 'Unauthorized' });
-  }
+  // ── all routes below require auth ────────────────────────────
+  const userId = checkToken(req);
+  if (!userId) return json(res, 401, { error: 'Unauthorized' });
 
-  // ── Admin ──────────────────────────────────────────────────
+  const user = dbGet(`SELECT * FROM users WHERE id = ${userId}`);
+  if (!user) return json(res, 401, { error: 'User not found' });
+
+  // ── admin ────────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
   }
 
   if (req.method === 'GET' && url === '/admin/stats') {
-    const mtgCount = db.exec('SELECT COUNT(*) FROM meetings')[0]?.values[0][0] || 0;
-    const cardCount = db.exec('SELECT COUNT(*) FROM cards')[0]?.values[0][0] || 0;
-    const docCount = db.exec('SELECT COUNT(*) FROM documents')[0]?.values[0][0] || 0;
+    const mtg = db.exec('SELECT COUNT(*) FROM meetings')[0]?.values[0][0] || 0;
+    const crd = db.exec('SELECT COUNT(*) FROM cards')[0]?.values[0][0] || 0;
+    const doc = db.exec('SELECT COUNT(*) FROM documents')[0]?.values[0][0] || 0;
+    const usr = db.exec('SELECT COUNT(*) FROM users')[0]?.values[0][0] || 0;
+    const paid = db.exec("SELECT COUNT(*) FROM users WHERE tier='paid'")[0]?.values[0][0] || 0;
     let dbSize = 0; try { dbSize = fs.statSync(DB_FILE).size; } catch(e) {}
-    return json(res, 200, {
-      meetings: mtgCount, cards: cardCount, docs: docCount, dbSize,
-      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'),
-      licenseSecretSet: !!loadEnvVar('LICENSE_SECRET'),
-      uptime: Math.round(process.uptime())
-    });
+    return json(res, 200, { meetings: mtg, cards: crd, docs: doc, users: usr, paidUsers: paid, dbSize,
+      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'), licenseSecretSet: !!loadEnvVar('LICENSE_SECRET'),
+      uptime: Math.round(process.uptime()) });
+  }
+
+  if (req.method === 'GET' && url === '/admin/users') {
+    const r = db.exec('SELECT id, email, tier, trial_seconds_used, created_at, license_type, data_deleted_at FROM users ORDER BY created_at DESC');
+    const users = r.length ? r[0].values.map(v => ({
+      id: v[0], email: v[1], tier: v[2], trialSecondsUsed: v[3], createdAt: v[4], licenseType: v[5], dataDeleted: !!v[6]
+    })) : [];
+    return json(res, 200, users);
+  }
+
+  if (req.method === 'POST' && url === '/admin/grant-license') {
+    const body = JSON.parse(await readBody(req));
+    const { targetUserId, licenseType } = body;
+    const key = generateLicenseKey(licenseType || 'lifetime');
+    db.run(`UPDATE users SET tier='paid', license_key='${key}', license_type='${licenseType || 'lifetime'}' WHERE id = ${parseInt(targetUserId)}`);
+    saveDb();
+    return json(res, 200, { ok: true, key });
   }
 
   if (req.method === 'GET' && url === '/admin/config') {
     const sk = loadEnvVar('STRIPE_SECRET_KEY');
     const wh = loadEnvVar('STRIPE_WEBHOOK_SECRET');
-    const ls = loadEnvVar('LICENSE_SECRET');
     return json(res, 200, {
       stripeKey: sk ? sk.substring(0, 7) + '...' + sk.slice(-4) : '',
       webhookSecret: wh ? wh.substring(0, 6) + '...' : '',
-      licenseSecretSet: !!ls
+      licenseSecretSet: !!loadEnvVar('LICENSE_SECRET')
     });
   }
 
@@ -526,10 +636,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/admin/generate-key') {
     const body = JSON.parse(await readBody(req));
-    const type = body.type === 'annual' ? 'annual' : 'lifetime';
-    const key = generateLicenseKey(type);
-    log('Admin generated license key:', type);
-    return json(res, 200, { key });
+    return json(res, 200, { key: generateLicenseKey(body.type === 'annual' ? 'annual' : 'lifetime') });
   }
 
   if (req.method === 'POST' && url === '/admin/verify-key') {
@@ -538,24 +645,56 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, info ? { valid: true, ...info } : { valid: false });
   }
 
-  if (req.method === 'GET' && url === '/api-key') {
-    return json(res, 200, { key: loadEnv() });
+  // ── user settings ────────────────────────────────────────────
+  if (req.method === 'GET' && url === '/user/settings') {
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
+    const ts = trialStatus(user);
+    return json(res, 200, {
+      provider: s?.ai_provider || 'openai',
+      model: s?.ai_model || 'gpt-4o',
+      hasAnthropicKey: !!(s?.anthropic_key),
+      hasOpenaiKey: !!(s?.openai_key),
+      tier: user.tier,
+      trialSecondsUsed: user.trial_seconds_used || 0,
+      trialSecondsTotal: TRIAL_SECONDS,
+      trialSecondsLeft: ts.secondsLeft ?? null
+    });
   }
 
-  if (req.method === 'POST' && url === '/save-key') {
+  if (req.method === 'POST' && url === '/user/settings') {
     const body = JSON.parse(await readBody(req));
-    if (body.key) saveEnv(body.key);
+    ensureUserSettings(userId);
+    const updates = [];
+    if (body.provider) updates.push(`ai_provider = '${body.provider === 'anthropic' ? 'anthropic' : 'openai'}'`);
+    if (body.model) updates.push(`ai_model = '${body.model.replace(/'/g, "''")}'`);
+    if (body.anthropicKey) updates.push(`anthropic_key = '${body.anthropicKey.trim().replace(/'/g, "''")}'`);
+    if (body.openaiKey) updates.push(`openai_key = '${body.openaiKey.trim().replace(/'/g, "''")}'`);
+    if (updates.length) { db.run(`UPDATE user_settings SET ${updates.join(', ')} WHERE user_id = ${userId}`); saveDb(); }
     return json(res, 200, { ok: true });
   }
 
-  // ── meeting CRUD ──────────────────────────────────────────
-  if (req.method === 'POST' && url === '/meeting/start') {
+  if (req.method === 'POST' && url === '/license/activate') {
     const body = JSON.parse(await readBody(req));
-    const stmt = db.prepare(`
-      INSERT INTO meetings (title, started_at, transcript, word_count, total_cards, context_used)
-      VALUES (?, ?, '', 0, 0, ?)
-    `);
-    stmt.run([body.title || 'Meeting ' + new Date().toLocaleDateString(), new Date().toISOString(), body.context || '']);
+    const info = verifyLicenseKey(body.key || '');
+    if (!info) return json(res, 400, { error: 'Invalid license key' });
+    db.run(`UPDATE users SET tier='paid', license_key='${body.key.replace(/'/g, "''")}', license_type='${info.type}' WHERE id = ${userId}`);
+    saveDb();
+    return json(res, 200, { ok: true, type: info.type });
+  }
+
+  if (req.method === 'GET' && url === '/trial/status') {
+    const ts = trialStatus(user);
+    return json(res, 200, ts);
+  }
+
+  // ── meeting CRUD ─────────────────────────────────────────────
+  if (req.method === 'POST' && url === '/meeting/start') {
+    const ts = trialStatus(user);
+    if (!ts.ok) return json(res, 402, { error: 'trial_expired', message: 'Your free trial has ended. Please upgrade to continue.' });
+    const body = JSON.parse(await readBody(req));
+    const stmt = db.prepare(`INSERT INTO meetings (user_id, title, started_at, transcript, word_count, total_cards, context_used) VALUES (?, ?, ?, '', 0, 0, ?)`);
+    stmt.run([userId, body.title || 'Meeting ' + new Date().toLocaleDateString(), new Date().toISOString(), body.context || '']);
     stmt.free();
     const id = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
     saveDb();
@@ -564,90 +703,59 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/meeting/update') {
     const body = JSON.parse(await readBody(req));
-    db.run(`
-      UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=?
-      WHERE id=?
-    `, [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
-    saveDb();
-    return json(res, 200, { ok: true });
+    db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
+      [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/meeting/end') {
     const body = JSON.parse(await readBody(req));
-    db.run(`
-      UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=?
-      WHERE id=?
-    `, [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
-    saveDb();
-    return json(res, 200, { ok: true });
+    db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
+      [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/card/save') {
     const body = JSON.parse(await readBody(req));
-    const stmt = db.prepare(`
-      INSERT INTO cards (meeting_id, captured_at, tag, title, body, transcript_snapshot)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    body.cards.forEach(c => {
-      stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']);
-    });
-    stmt.free();
-    saveDb();
-    return json(res, 200, { ok: true });
+    const stmt = db.prepare(`INSERT INTO cards (meeting_id, captured_at, tag, title, body, transcript_snapshot) VALUES (?,?,?,?,?,?)`);
+    body.cards.forEach(c => stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']));
+    stmt.free(); saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url === '/meetings') {
-    const result = db.exec(`
-      SELECT m.id, m.title, m.started_at, m.ended_at, m.word_count, m.total_cards,
-             COUNT(c.id) as card_count
-      FROM meetings m
-      LEFT JOIN cards c ON c.meeting_id = m.id
-      GROUP BY m.id
-      ORDER BY m.started_at DESC
-    `);
-    const rows = result.length ? result[0].values.map(r => ({
-      id: r[0], title: r[1], started_at: r[2], ended_at: r[3],
-      word_count: r[4], total_cards: r[5], card_count: r[6]
-    })) : [];
+    const r = db.exec(`SELECT m.id, m.title, m.started_at, m.ended_at, m.word_count, m.total_cards, COUNT(c.id) as card_count FROM meetings m LEFT JOIN cards c ON c.meeting_id = m.id WHERE m.user_id=${userId} GROUP BY m.id ORDER BY m.started_at DESC`);
+    const rows = r.length ? r[0].values.map(r => ({ id:r[0], title:r[1], started_at:r[2], ended_at:r[3], word_count:r[4], total_cards:r[5], card_count:r[6] })) : [];
     return json(res, 200, rows);
   }
 
   if (req.method === 'GET' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
-    const m = db.exec(`SELECT * FROM meetings WHERE id=${id}`);
+    const m = db.exec(`SELECT * FROM meetings WHERE id=${id} AND user_id=${userId}`);
     const c = db.exec(`SELECT * FROM cards WHERE meeting_id=${id} ORDER BY captured_at ASC`);
     if (!m.length || !m[0].values.length) return json(res, 404, { error: 'Not found' });
-    const cols = m[0].columns;
-    const vals = m[0].values[0];
-    const meeting = {};
-    cols.forEach((col, i) => meeting[col] = vals[i]);
+    const meeting = {}; m[0].columns.forEach((col, i) => meeting[col] = m[0].values[0][i]);
     const cardCols = c.length ? c[0].columns : [];
-    const cards = c.length ? c[0].values.map(r => {
-      const card = {};
-      cardCols.forEach((col, i) => card[col] = r[i]);
-      return card;
-    }) : [];
+    const cards = c.length ? c[0].values.map(r => { const card = {}; cardCols.forEach((col, i) => card[col] = r[i]); return card; }) : [];
     return json(res, 200, { meeting, cards });
   }
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
-    db.run(`DELETE FROM cards WHERE meeting_id=?`, [id]);
-    db.run(`DELETE FROM meetings WHERE id=?`, [id]);
-    saveDb();
-    return json(res, 200, { ok: true });
+    db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
+    db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url === '/export/csv') {
-    const m = db.exec(`SELECT m.id, m.title, m.started_at, m.ended_at, m.word_count, m.total_cards FROM meetings m ORDER BY m.started_at DESC`);
-    const c = db.exec(`SELECT meeting_id, captured_at, tag, title, body FROM cards ORDER BY meeting_id, captured_at`);
+    const m = db.exec(`SELECT id, title, started_at, ended_at, word_count, total_cards FROM meetings WHERE user_id=${userId} ORDER BY started_at DESC`);
+    const c = db.exec(`SELECT meeting_id, captured_at, tag, title, body FROM cards WHERE meeting_id IN (SELECT id FROM meetings WHERE user_id=${userId}) ORDER BY meeting_id, captured_at`);
     let csv = 'meeting_id,meeting_title,started_at,ended_at,word_count,card_tag,card_title,card_body\n';
     const meetings = {};
     if (m.length) m[0].values.forEach(r => meetings[r[0]] = { title: r[1], started: r[2], ended: r[3], words: r[4] });
     if (c.length) c[0].values.forEach(r => {
-      const mtg = meetings[r[0]] || {};
-      const esc = v => '"' + (v||'').toString().replace(/"/g,'""') + '"';
-      csv += `${r[0]},${esc(mtg.title)},${esc(mtg.started)},${esc(mtg.ended)},${mtg.words||0},${esc(r[2])},${esc(r[3])},${esc(r[4])}\n`;
+      const mt = meetings[r[0]] || {};
+      const esc = v => '"' + (v||'').toString().replace(/"/g, '""') + '"';
+      csv += `${r[0]},${esc(mt.title)},${esc(mt.started)},${esc(mt.ended)},${mt.words||0},${esc(r[2])},${esc(r[3])},${esc(r[4])}\n`;
     });
     res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="meetings.csv"' });
     return res.end(csv);
@@ -655,85 +763,99 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/meeting/todos') {
     const body = JSON.parse(await readBody(req));
-    db.run('UPDATE meetings SET todos=? WHERE id=?', [body.todos || '[]', body.id]);
-    saveDb();
-    return json(res, 200, { ok: true });
+    db.run(`UPDATE meetings SET todos=? WHERE id=? AND user_id=${userId}`, [body.todos || '[]', body.id]);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
-  // ── Claude proxy ──────────────────────────────────────────
+  // ── AI proxy ─────────────────────────────────────────────────
   if (req.method === 'POST' && url === '/proxy') {
-    const apiKey = loadEnv();
-    if (!apiKey) return json(res, 401, { error: 'No API key' });
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
+    const provider = s?.ai_provider || 'openai';
+    const model = s?.ai_model || 'gpt-4o';
     const body = await readBody(req);
-    const https = require('https');
-    const payload = body;
-    const options = {
-      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Length': Buffer.byteLength(payload)
+    try {
+      if (provider === 'anthropic') {
+        const apiKey = s?.anthropic_key;
+        if (!apiKey) return json(res, 400, { error: 'No Anthropic API key saved. Go to Settings to add your key.' });
+        const parsedBody = JSON.parse(body);
+        parsedBody.model = model;
+        const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        return res.end(result.body);
+      } else {
+        const apiKey = s?.openai_key;
+        if (!apiKey) return json(res, 400, { error: 'No OpenAI API key saved. Go to Settings to add your key.' });
+        const result = await proxyOpenAI(body, apiKey, model);
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        return res.end(result.body);
       }
-    };
-    const proxyReq = https.request(options, proxyRes => {
-      let data = '';
-      proxyRes.on('data', d => data += d);
-      proxyRes.on('end', () => { res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' }); res.end(data); });
-    });
-    proxyReq.on('error', e => json(res, 500, { error: e.message }));
-    proxyReq.write(payload);
-    return proxyReq.end();
+    } catch(e) { return json(res, 500, { error: e.message }); }
   }
 
-  // ── Whisper transcription ─────────────────────────────────
+  // ── Transcription (OpenAI Whisper API) ───────────────────────
   if (req.method === 'POST' && url === '/transcribe') {
+    const ts = trialStatus(user);
+    if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT openai_key FROM user_settings WHERE user_id = ${userId}`);
+    if (!s?.openai_key) return json(res, 400, { error: 'no_openai_key', message: 'Add an OpenAI key in Settings to enable transcription.' });
     const body = JSON.parse(await readBody(req));
     const { audio, sampleRate = 16000 } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
-      const whisper = await getWhisper();
       const buf = Buffer.from(audio, 'base64');
-      // slice() copies bytes into a new ArrayBuffer at offset 0 — avoids Float32Array alignment error
       const aligned = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       const audioData = new Float32Array(aligned);
-      log('Transcribe: ' + audioData.length + ' samples @ ' + sampleRate + ' Hz');
-      const result = await whisper(audioData, { sampling_rate: sampleRate });
-      log('Whisper result: ' + JSON.stringify(result.text || ''));
-      return json(res, 200, { text: result.text || '' });
+      const audioSeconds = audioData.length / sampleRate;
+      const wav = float32ToWav(audioData, sampleRate);
+      const text = await openaiWhisper(wav, s.openai_key);
+      // track trial usage
+      if (user.tier === 'trial') {
+        const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
+        db.run(`UPDATE users SET trial_seconds_used = ${newUsed} WHERE id = ${userId}`);
+        if (newUsed >= TRIAL_SECONDS) markTrialExpired(userId);
+        saveDb();
+      }
+      return json(res, 200, { text });
     } catch(e) {
-      log('Transcription error: ' + e.message);
+      log('Transcription error:', e.message);
       return json(res, 200, { text: '' });
     }
   }
 
-  // ── document RAG ──────────────────────────────────────────
+  // ── documents ────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/documents') {
-    const r = db.exec('SELECT id, name, file_type, size, chunk_count, uploaded_at FROM documents ORDER BY uploaded_at DESC');
+    const r = db.exec(`SELECT id, name, file_type, size, chunk_count, uploaded_at FROM documents WHERE user_id=${userId} ORDER BY uploaded_at DESC`);
     const docs = r.length ? r[0].values.map(v => ({ id:v[0], name:v[1], file_type:v[2], size:v[3], chunk_count:v[4], uploaded_at:v[5] })) : [];
     return json(res, 200, docs);
   }
 
   if (req.method === 'POST' && url === '/documents/upload') {
+    const ts = trialStatus(user);
+    if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
+    if (user.tier === 'trial' && (user.trial_docs_uploaded || 0) >= TRIAL_MAX_DOCS) {
+      return json(res, 402, { error: 'trial_doc_limit', message: `Free trial allows ${TRIAL_MAX_DOCS} documents. Please upgrade.` });
+    }
     const body = JSON.parse(await readBody(req));
     const { name, data } = body;
     const ext = (name || '').split('.').pop().toLowerCase();
     if (!['txt','md','pdf','docx','html','htm'].includes(ext)) return json(res, 400, { error: 'Unsupported file type' });
     const buf = Buffer.from(data, 'base64');
-    let text;
-    try { text = await extractText(buf, ext); } catch(e) { return json(res, 500, { error: 'Extraction failed: ' + e.message }); }
+    let text; try { text = await extractText(buf, ext); } catch(e) { return json(res, 500, { error: 'Extraction failed: ' + e.message }); }
     if (!text || text.trim().length < 20) return json(res, 400, { error: 'No text content found' });
     const chunks = chunkText(text);
-    const ds = db.prepare('INSERT INTO documents (name, file_type, size, char_count, chunk_count, uploaded_at) VALUES (?,?,?,?,?,?)');
-    ds.run([name, ext, buf.length, text.length, chunks.length, new Date().toISOString()]);
+    const ds = db.prepare('INSERT INTO documents (user_id, name, file_type, size, char_count, chunk_count, uploaded_at) VALUES (?,?,?,?,?,?,?)');
+    ds.run([userId, name, ext, buf.length, text.length, chunks.length, new Date().toISOString()]);
     ds.free();
     const docId = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
     for (let i = 0; i < chunks.length; i++) {
-      let emb = [];
-      try { emb = await computeEmbedding(chunks[i]); } catch(e) { console.warn('Embedding error chunk', i, e.message); }
+      let emb = []; try { emb = await computeEmbedding(chunks[i]); } catch(e) {}
       const cs = db.prepare('INSERT INTO document_chunks (doc_id, chunk_index, text, embedding) VALUES (?,?,?,?)');
-      cs.run([docId, i, chunks[i], JSON.stringify(emb)]);
-      cs.free();
+      cs.run([docId, i, chunks[i], JSON.stringify(emb)]); cs.free();
+    }
+    if (user.tier === 'trial') {
+      db.run(`UPDATE users SET trial_docs_uploaded = trial_docs_uploaded + 1 WHERE id = ${userId}`);
     }
     saveDb();
     return json(res, 200, { id: docId, name, chunks: chunks.length });
@@ -743,11 +865,10 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const { query, topK = 4 } = body;
     if (!query) return json(res, 200, { chunks: [] });
-    const cr = db.exec('SELECT COUNT(*) FROM document_chunks');
+    const cr = db.exec(`SELECT COUNT(*) FROM document_chunks dc JOIN documents d ON d.id=dc.doc_id WHERE d.user_id=${userId}`);
     if (!cr.length || !cr[0].values[0][0]) return json(res, 200, { chunks: [] });
-    let qEmb;
-    try { qEmb = await computeEmbedding(query); } catch(e) { return json(res, 200, { chunks: [] }); }
-    const rows = db.exec('SELECT dc.text, dc.embedding, d.name FROM document_chunks dc JOIN documents d ON d.id=dc.doc_id');
+    let qEmb; try { qEmb = await computeEmbedding(query); } catch(e) { return json(res, 200, { chunks: [] }); }
+    const rows = db.exec(`SELECT dc.text, dc.embedding, d.name FROM document_chunks dc JOIN documents d ON d.id=dc.doc_id WHERE d.user_id=${userId}`);
     if (!rows.length) return json(res, 200, { chunks: [] });
     const scored = [];
     for (const r of rows[0].values) {
@@ -762,56 +883,54 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'DELETE' && url.startsWith('/documents/')) {
     const id = parseInt(url.split('/')[2]);
     if (!isNaN(id)) {
-      db.run('DELETE FROM document_chunks WHERE doc_id=?', [id]);
-      db.run('DELETE FROM documents WHERE id=?', [id]);
-      saveDb();
-      return json(res, 200, { ok: true });
+      db.run(`DELETE FROM document_chunks WHERE doc_id=${id}`);
+      db.run(`DELETE FROM documents WHERE id=${id} AND user_id=${userId}`);
+      saveDb(); return json(res, 200, { ok: true });
     }
   }
 
+  // ── open external URL (Electron compat shim) ─────────────────
   if (req.method === 'POST' && url === '/open-url') {
     const body = JSON.parse(await readBody(req));
-    try {
-      const { shell } = require('electron');
-      await shell.openExternal(body.url || '');
-      return json(res, 200, { ok: true });
-    } catch(e) { return json(res, 200, { ok: false }); }
+    try { const { shell } = require('electron'); await shell.openExternal(body.url || ''); return json(res, 200, { ok: true }); }
+    catch(e) { return json(res, 200, { ok: false }); }
   }
 
-  // ── Microsoft To Do integration ───────────────────────────────
+  // ── Microsoft To Do ──────────────────────────────────────────
   if (req.method === 'GET' && url === '/msft/status') {
-    const clientId = loadMsftClientId();
-    const tokens = loadMsftTokens();
-    return json(res, 200, { hasClientId: !!clientId, authenticated: !!tokens });
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT msft_client_id, msft_tokens FROM user_settings WHERE user_id = ${userId}`);
+    return json(res, 200, { hasClientId: !!(s?.msft_client_id), authenticated: !!(s?.msft_tokens) });
   }
 
   if (req.method === 'POST' && url === '/msft/save-client') {
     const body = JSON.parse(await readBody(req));
-    if (body.clientId) saveMsftClientId(body.clientId.trim());
-    return json(res, 200, { ok: true });
+    ensureUserSettings(userId);
+    if (body.clientId) db.run(`UPDATE user_settings SET msft_client_id = '${body.clientId.trim().replace(/'/g, "''")}' WHERE user_id = ${userId}`);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/msft/start-auth') {
-    const clientId = loadMsftClientId();
-    if (!clientId) return json(res, 400, { error: 'No client ID saved' });
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT msft_client_id FROM user_settings WHERE user_id = ${userId}`);
+    if (!s?.msft_client_id) return json(res, 400, { error: 'No client ID saved' });
     try {
-      const result = await msftFormPost('/common/oauth2/v2.0/devicecode', {
-        client_id: clientId, scope: 'Tasks.ReadWrite offline_access'
-      });
+      const result = await msftFormPost('/common/oauth2/v2.0/devicecode', { client_id: s.msft_client_id, scope: 'Tasks.ReadWrite offline_access' });
       return json(res, 200, result);
     } catch(e) { return json(res, 500, { error: e.message }); }
   }
 
   if (req.method === 'POST' && url === '/msft/poll-auth') {
     const body = JSON.parse(await readBody(req));
-    const clientId = loadMsftClientId();
+    ensureUserSettings(userId);
+    const s = dbGet(`SELECT msft_client_id FROM user_settings WHERE user_id = ${userId}`);
     try {
       const result = await msftFormPost('/common/oauth2/v2.0/token', {
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-        client_id: clientId, device_code: body.device_code
+        client_id: s.msft_client_id, device_code: body.device_code
       });
       if (result.access_token) {
-        saveMsftTokens({ ...result, acquired_at: Date.now() });
+        saveMsftTokens(userId, { ...result, acquired_at: Date.now() });
         return json(res, 200, { status: 'authenticated' });
       }
       if (result.error === 'authorization_pending') return json(res, 200, { status: 'pending' });
@@ -820,13 +939,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url === '/msft/disconnect') {
-    try { fs.unlinkSync(MSFT_TOKENS_FILE); } catch(e) {}
-    return json(res, 200, { ok: true });
+    ensureUserSettings(userId);
+    db.run(`UPDATE user_settings SET msft_tokens = NULL WHERE user_id = ${userId}`);
+    saveDb(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url === '/msft/lists') {
     try {
-      const tokens = await getValidMsftTokens();
+      const tokens = await getValidMsftTokens(userId);
       if (!tokens) return json(res, 401, { error: 'Not authenticated' });
       const r = await graphGet(tokens, '/me/todo/lists');
       return json(res, 200, { lists: r.value || [] });
@@ -836,14 +956,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url === '/msft/create-tasks') {
     const body = JSON.parse(await readBody(req));
     try {
-      const tokens = await getValidMsftTokens();
+      const tokens = await getValidMsftTokens(userId);
       if (!tokens) return json(res, 401, { error: 'Not authenticated' });
       let created = 0;
       for (const text of (body.tasks || [])) {
         await graphPost(tokens, `/me/todo/lists/${body.listId}/tasks`, { title: text });
         created++;
       }
-      log('Created ' + created + ' Microsoft To Do tasks');
       return json(res, 200, { created });
     } catch(e) { return json(res, 500, { error: e.message }); }
   }
@@ -853,12 +972,8 @@ const server = http.createServer(async (req, res) => {
 
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
-    server.listen(PORT, '127.0.0.1', () => {
-      log(`Meeto running at http://localhost:${PORT}`);
-      if (!process.versions.electron) {
-        const { exec } = require('child_process');
-        exec(`start http://localhost:${PORT}`);
-      }
+    server.listen(PORT, '0.0.0.0', () => {
+      log(`Meeto running at http://0.0.0.0:${PORT}`);
       resolve();
     });
   });

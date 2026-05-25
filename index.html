@@ -160,6 +160,29 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 .hist-card-time { font-size: 10px; color: var(--text3); margin-top: 3px; }
 .meeting-badge { font-size: 11px; padding: 3px 9px; border-radius: 99px; background: var(--green-bg); color: var(--green); font-weight: 600; }
 .meeting-badge.recording { background: var(--danger-bg); color: var(--danger-text); animation: pulse 1.5s infinite; }
+.trial-badge { font-size: 11px; padding: 3px 10px; border-radius: 99px; background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.trial-badge.expired { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
+/* ── overlay modals ── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.overlay-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 32px 28px; width: 100%; max-width: 440px; box-shadow: 0 16px 48px rgba(0,0,0,0.2); }
+.overlay-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.02em; }
+.overlay-card .sub { font-size: 13px; color: var(--text2); margin-bottom: 22px; line-height: 1.5; }
+.overlay-close { position: absolute; top: 14px; right: 16px; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text2); line-height: 1; padding: 4px; }
+.overlay-card { position: relative; }
+.settings-row { margin-bottom: 16px; }
+.settings-row label { font-size: 11px; font-weight: 700; color: var(--text2); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+.settings-row select, .settings-row input[type=password], .settings-row input[type=text] { width: 100%; padding: 9px 11px; font-size: 13px; border-radius: 7px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-family: inherit; outline: none; }
+.settings-row select:focus, .settings-row input:focus { border-color: var(--blue); }
+.settings-key-status { font-size: 11px; color: var(--green); margin-top: 3px; }
+.paywall-icon { font-size: 40px; text-align: center; margin-bottom: 16px; }
+.paywall-features { list-style: none; margin-bottom: 22px; }
+.paywall-features li { font-size: 13px; padding: 4px 0; color: var(--text2); }
+.paywall-features li::before { content: '✓ '; color: var(--green); font-weight: 700; }
+.btn-upgrade { width: 100%; padding: 12px; background: var(--blue); color: #fff; font-size: 14px; font-weight: 700; border: none; border-radius: 9px; cursor: pointer; font-family: inherit; margin-bottom: 10px; transition: opacity 0.15s; }
+.btn-upgrade:hover { opacity: 0.88; }
+.license-input-row { display: flex; gap: 8px; margin-top: 14px; }
+.license-input-row input { flex: 1; padding: 9px 11px; font-size: 12px; border-radius: 7px; border: 1px solid var(--border2); background: var(--surface2); color: var(--text); font-family: 'Courier New', monospace; outline: none; }
+.license-input-row button { padding: 9px 14px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 7px; color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .turn.mine { background: var(--surface); border-left-color: var(--text3); opacity: 0.65; }
 .turn.mine .turn-time::after { content: ' · you'; color: var(--text3); }
 .turn.theirs { background: var(--surface2); border-left-color: #3b82f6; }
@@ -237,16 +260,13 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     <button class="btn small" onclick="openHistory()"><i class="ti ti-history" aria-hidden="true"></i> History</button>
     <a class="export-btn" href="/export/csv" target="_blank"><i class="ti ti-download" aria-hidden="true"></i> CSV</a>
     <button class="btn small" onclick="clearAll()"><i class="ti ti-trash" aria-hidden="true"></i></button>
+    <span id="trialBadge" class="trial-badge" onclick="openPaywall()" style="display:none"></span>
     <button class="btn small" onclick="toggleDbg()" title="Toggle debug log"><i class="ti ti-bug" aria-hidden="true"></i></button>
-    <button class="btn small" onclick="doLogout()" title="Lock / sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="openSettings()" title="Settings"><i class="ti ti-settings" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
   </div>
 
-  <div class="key-bar" id="keyBar">
-    <label>API key</label>
-    <input type="password" id="keyInput" placeholder="sk-ant-..." autocomplete="off" />
-    <button class="btn small" onclick="saveKey()"><i class="ti ti-device-floppy" aria-hidden="true"></i> Save</button>
-    <span class="hint" id="keyHint">Saved to .env file on your machine</span>
-  </div>
+  <div class="key-bar" id="keyBar" style="display:none"></div>
 
   <div class="controls-bar">
     <div class="ctrl-group">
@@ -458,6 +478,7 @@ async function startMeeting() {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ title, context: ctx })
     });
+    if (r.status === 402) { openPaywall(); return; }
     const d = await r.json();
     currentMeetingId = d.id;
     document.getElementById('meetingBadge').textContent = '● ' + title;
@@ -466,7 +487,6 @@ async function startMeeting() {
     document.getElementById('endMeetingBtn').style.display = '';
     document.getElementById('meetingTitle').value = title;
     autoSaveTimer = setInterval(autoSave, 15000);
-    console.log('Meeting started:', currentMeetingId);
   } catch(e) { console.error('Start meeting failed:', e); }
 }
 
@@ -776,15 +796,7 @@ document.addEventListener('keyup', e => {
 });
 
 async function init() {
-  try {
-    const r = await fetch('/api-key');
-    const d = await r.json();
-    if (d.key) {
-      document.getElementById('keyInput').value = d.key;
-      document.getElementById('keyBar').classList.add('saved');
-      document.getElementById('keyHint').textContent = 'Key loaded from .env';
-    }
-  } catch(e) {}
+  await loadUserSettings();
 
   const saved = localStorage.getItem('meetingCtx');
   if (saved) document.getElementById('ctx').value = saved;
@@ -793,7 +805,12 @@ async function init() {
   });
   loadDocuments();
   populateMicList();
-  stopViz(); // draw idle flat line on canvas
+  stopViz();
+
+  // auto-open settings if no API key configured
+  if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
+    setTimeout(openSettings, 600);
+  }
 }
 
 async function populateMicList() {
@@ -814,15 +831,7 @@ async function populateMicList() {
   } catch(e) {}
 }
 
-async function saveKey() {
-  const key = document.getElementById('keyInput').value.trim();
-  if (!key) return;
-  try {
-    await fetch('/save-key', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key}) });
-    document.getElementById('keyBar').classList.add('saved');
-    document.getElementById('keyHint').textContent = 'Saved to .env — will load automatically next time';
-  } catch(e) { alert('Could not save key: ' + e.message); }
-}
+function saveKey() {} // legacy stub
 
 function setStatus(state, label) {
   document.getElementById('dot').className = 'dot' + (state ? ' ' + state : '');
@@ -1194,7 +1203,13 @@ async function processChunkQueue() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE })
       });
+      if (resp.status === 402) { stopListen(); openPaywall(); return; }
+      if (resp.status === 400) {
+        const d = await resp.json();
+        if (d.error === 'no_openai_key') { stopListen(); openSettings(); return; }
+      }
       const { text } = await resp.json();
+      await loadUserSettings(); // refresh trial counter
       dbg('Whisper result: ' + JSON.stringify(text));
       const clean = (text || '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
       if (wordCount(clean) >= 1) {
@@ -1710,7 +1725,175 @@ async function doLogout() {
   window.location.reload();
 }
 
+// ── Settings ─────────────────────────────────────────────────
+let _userSettings = { provider: 'openai', model: 'gpt-4o', hasAnthropicKey: false, hasOpenaiKey: false, tier: 'trial', trialSecondsLeft: null };
+
+const CLAUDE_MODELS = [
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7 (most powerful)' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (balanced)' },
+  { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5 (fast)' }
+];
+const OPENAI_MODELS = [
+  { id: 'gpt-4o', name: 'GPT-4o (recommended)' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o mini (fast & cheap)' },
+  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+  { id: 'o1-mini', name: 'o1-mini (reasoning)' }
+];
+
+async function loadUserSettings() {
+  try {
+    const r = await fetch('/user/settings').then(r => r.json());
+    _userSettings = r;
+    updateTrialBadge();
+  } catch(e) {}
+}
+
+function updateTrialBadge() {
+  const badge = document.getElementById('trialBadge');
+  if (!badge) return;
+  if (_userSettings.tier === 'paid') { badge.style.display = 'none'; return; }
+  const left = _userSettings.trialSecondsLeft;
+  if (left === null || left === undefined) { badge.style.display = 'none'; return; }
+  badge.style.display = '';
+  if (left <= 0) {
+    badge.textContent = '⏱ Trial expired';
+    badge.classList.add('expired');
+  } else {
+    const mins = Math.ceil(left / 60);
+    badge.textContent = `⏱ ${mins} min trial left`;
+    badge.classList.remove('expired');
+  }
+}
+
+function openSettings() {
+  const el = document.getElementById('settingsOverlay');
+  if (!el) return;
+  renderSettings();
+  el.style.display = 'flex';
+}
+function closeSettings() {
+  const el = document.getElementById('settingsOverlay');
+  if (el) el.style.display = 'none';
+}
+
+function renderSettings() {
+  const s = _userSettings;
+  const providerSel = document.getElementById('settingsProvider');
+  const modelSel = document.getElementById('settingsModel');
+  providerSel.value = s.provider || 'openai';
+  updateModelOptions();
+  modelSel.value = s.model || 'gpt-4o';
+  document.getElementById('settingsAnthropicStatus').textContent = s.hasAnthropicKey ? '✓ Key saved' : '';
+  document.getElementById('settingsOpenaiStatus').textContent = s.hasOpenaiKey ? '✓ Key saved' : '';
+  document.getElementById('settingsAnthropicKey').value = '';
+  document.getElementById('settingsOpenaiKey').value = '';
+}
+
+function updateModelOptions() {
+  const provider = document.getElementById('settingsProvider').value;
+  const modelSel = document.getElementById('settingsModel');
+  const models = provider === 'anthropic' ? CLAUDE_MODELS : OPENAI_MODELS;
+  modelSel.innerHTML = models.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  if (_userSettings.model) modelSel.value = _userSettings.model;
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('saveSettingsBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const body = {
+    provider: document.getElementById('settingsProvider').value,
+    model: document.getElementById('settingsModel').value
+  };
+  const ak = document.getElementById('settingsAnthropicKey').value.trim();
+  const ok = document.getElementById('settingsOpenaiKey').value.trim();
+  if (ak) body.anthropicKey = ak;
+  if (ok) body.openaiKey = ok;
+  await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  await loadUserSettings();
+  btn.disabled = false; btn.textContent = 'Save';
+  closeSettings();
+}
+
+function openPaywall() {
+  const el = document.getElementById('paywallOverlay');
+  if (el) el.style.display = 'flex';
+}
+function closePaywall() {
+  const el = document.getElementById('paywallOverlay');
+  if (el) el.style.display = 'none';
+}
+async function activateLicense() {
+  const key = document.getElementById('licenseKeyInput').value.trim();
+  if (!key) return;
+  const btn = document.getElementById('activateLicenseBtn');
+  btn.disabled = true; btn.textContent = 'Activating…';
+  const r = await fetch('/license/activate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ key }) }).then(r => r.json());
+  if (r.ok) {
+    await loadUserSettings();
+    closePaywall();
+    dbg('License activated: ' + r.type);
+  } else {
+    alert(r.error || 'Invalid license key.');
+    btn.disabled = false; btn.textContent = 'Activate';
+  }
+}
+
 init();
 </script>
+
+<!-- Settings modal -->
+<div class="overlay" id="settingsOverlay" style="display:none" onclick="if(event.target===this)closeSettings()">
+  <div class="overlay-card">
+    <button class="overlay-close" onclick="closeSettings()">×</button>
+    <h3>Settings</h3>
+    <p class="sub">Configure your AI provider and API keys. Keys are stored server-side only.</p>
+
+    <div class="settings-row">
+      <label>AI Provider</label>
+      <select id="settingsProvider" onchange="updateModelOptions()">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+      </select>
+    </div>
+    <div class="settings-row">
+      <label>Model</label>
+      <select id="settingsModel"></select>
+    </div>
+    <div class="settings-row">
+      <label>OpenAI API Key</label>
+      <input type="password" id="settingsOpenaiKey" placeholder="sk-..." autocomplete="off" />
+      <div class="settings-key-status" id="settingsOpenaiStatus"></div>
+    </div>
+    <div class="settings-row">
+      <label>Anthropic API Key</label>
+      <input type="password" id="settingsAnthropicKey" placeholder="sk-ant-..." autocomplete="off" />
+      <div class="settings-key-status" id="settingsAnthropicStatus"></div>
+    </div>
+    <button class="btn-upgrade" id="saveSettingsBtn" onclick="saveSettings()">Save</button>
+  </div>
+</div>
+
+<!-- Paywall modal -->
+<div class="overlay" id="paywallOverlay" style="display:none" onclick="if(event.target===this)closePaywall()">
+  <div class="overlay-card">
+    <button class="overlay-close" onclick="closePaywall()">×</button>
+    <div class="paywall-icon">☄️</div>
+    <h3>Your free trial has ended</h3>
+    <p class="sub">Upgrade to keep all your notes, unlimited meetings, and full AI analysis.</p>
+    <ul class="paywall-features">
+      <li>Unlimited recording time</li>
+      <li>Unlimited document uploads</li>
+      <li>Full AI insight cards</li>
+      <li>Meeting history &amp; export</li>
+      <li>Microsoft To Do integration</li>
+    </ul>
+    <button class="btn-upgrade" onclick="window.open('/landing#pricing','_blank')">See pricing →</button>
+    <p class="sub" style="text-align:center;margin-top:12px;margin-bottom:0">Already have a license key?</p>
+    <div class="license-input-row">
+      <input type="text" id="licenseKeyInput" placeholder="MEETO-..." />
+      <button id="activateLicenseBtn" onclick="activateLicense()">Activate</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
