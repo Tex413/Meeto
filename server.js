@@ -416,6 +416,73 @@ async function getWhisper() {
   return _whisper;
 }
 
+// ── domain vocabulary correction ("grammar file" for Whisper) ──
+// Whisper base.en mishears proper nouns/jargon (e.g. "Palantir" -> "palamis").
+// We derive a lexicon from the user's context + docs and fuzzy-correct the
+// transcript toward it. Local, free, high-precision (conservative thresholds);
+// the LLM refine pass handles the rest. See client: context sent to /transcribe.
+const STT_COMMON_WORDS = new Set(('the be to of and a in that have i it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is are was were been has had did going got me my your our their here say said go do done very really kind sort thing things lot okay yeah yes no maybe gonna wanna got let going need').split(' '));
+
+function sttSoundex(s) {
+  s = s.toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return '';
+  const codes = { B:1,F:1,P:1,V:1, C:2,G:2,J:2,K:2,Q:2,S:2,X:2,Z:2, D:3,T:3, L:4, M:5,N:5, R:6 };
+  let out = s[0], prev = codes[s[0]] || 0;
+  for (let i = 1; i < s.length && out.length < 4; i++) {
+    const c = codes[s[i]] || 0;
+    if (c && c !== prev) out += c;
+    if (s[i] !== 'H' && s[i] !== 'W') prev = c;
+  }
+  return (out + '000').slice(0, 4);
+}
+function sttLeven(a, b) {
+  const m = a.length, n = b.length;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[m][n];
+}
+// Build a lexicon of {disp, lc, sx} from context text.
+function buildSttLexicon(context) {
+  if (!context || typeof context !== 'string') return [];
+  const tokens = context.match(/[A-Za-z][A-Za-z'&./-]*[A-Za-z]|[A-Z]{2,}/g) || [];
+  const byLc = new Map();
+  for (const w of tokens) {
+    const lc = w.toLowerCase();
+    const isAcronym = w.length >= 2 && w.length <= 6 && w === w.toUpperCase() && /[A-Z]/.test(w);
+    if (!isAcronym && (lc.length < 4 || STT_COMMON_WORDS.has(lc))) continue;
+    // prefer a capitalized/acronym display form if we see one
+    const existing = byLc.get(lc);
+    const better = !existing || (w[0] === w[0].toUpperCase() && existing.disp[0] !== existing.disp[0].toUpperCase());
+    if (better) byLc.set(lc, { disp: w, lc, sx: sttSoundex(lc) });
+  }
+  return [...byLc.values()];
+}
+// Correct a transcript word-by-word against the lexicon. Conservative.
+function correctTranscript(text, context) {
+  if (!text || !context) return text;
+  const lex = buildSttLexicon(context);
+  if (!lex.length) return text;
+  return text.replace(/[A-Za-z][A-Za-z'-]*/g, (tok) => {
+    const lc = tok.toLowerCase();
+    if (lc.length < 4 || STT_COMMON_WORDS.has(lc)) return tok;
+    const sx = sttSoundex(lc);
+    let best = null, bestD = Infinity;
+    for (const v of lex) {
+      if (v.lc === lc) return v.disp;                     // exact -> normalize casing
+      if (lc[0] !== v.lc[0]) continue;                    // anchor on first letter
+      if (Math.abs(v.lc.length - lc.length) > 3) continue;
+      const d = sttLeven(lc, v.lc);
+      const phonetic = v.sx.slice(0, 3) === sx.slice(0, 3); // strong phonetic anchor
+      // phonetic match -> tolerate more edits; otherwise only fix 1-char typos
+      const thr = phonetic ? Math.max(2, Math.round(v.lc.length * 0.45)) : 1;
+      if (d <= thr && d < bestD) { best = v; bestD = d; }
+    }
+    return best ? best.disp : tok;
+  });
+}
+
 // ── RAG / embeddings ───────────────────────────────────────────
 let _embedder = null, _embedderLoading = false;
 async function getEmbedder() {
@@ -973,7 +1040,7 @@ const server = http.createServer(async (req, res) => {
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     const body = JSON.parse(await readBody(req));
-    const { audio, sampleRate = 16000 } = body;
+    const { audio, sampleRate = 16000, context = '' } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
       const whisper = await getWhisper();
@@ -983,7 +1050,10 @@ const server = http.createServer(async (req, res) => {
       const audioData = new Float32Array(aligned);
       const audioSeconds = audioData.length / sampleRate;
       const result = await whisper(audioData, { sampling_rate: sampleRate });
-      const text = result.text || '';
+      const raw = result.text || '';
+      // local "grammar file": fuzzy-correct toward the user's domain vocabulary
+      const text = correctTranscript(raw, context);
+      if (text !== raw) log('Transcribe corrected: ' + JSON.stringify(raw) + ' → ' + JSON.stringify(text));
       log('Transcribe: ' + audioData.length + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
       // track trial usage
       if (user.tier === 'trial') {

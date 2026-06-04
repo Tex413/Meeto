@@ -1616,7 +1616,7 @@ async function processChunkQueue() {
       const resampled = await resampleTo16k(samples, nativeRate);
       const resp = await fetch('/transcribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE })
+        body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE, context: (document.getElementById('ctx')?.value || '') })
       });
       if (resp.status === 402) { stopListen(); openPaywall(); return; }
       if (!resp.ok) {
