@@ -638,6 +638,7 @@ html, body {
     <button class="btn small danger" onclick="endMeeting()" id="endMeetingBtn" style="display:none;"><i class="ti ti-player-stop" aria-hidden="true"></i> End</button>
     <!-- Spacer -->
     <div style="flex:1;min-width:0;"></div>
+    <span id="buildBadge" title="Server build — confirms which version is serving this page" style="font-size:10px;color:var(--text3);font-variant-numeric:tabular-nums;padding:2px 6px;border:0.5px solid var(--border);border-radius:99px;">v…</span>
     <!-- Mic + status -->
     <div class="status-row">
       <div class="dot" id="dot"></div>
@@ -810,6 +811,7 @@ html, body {
 </div>
 
 <script>
+const APP_BUILD = '__BUILD__';
 let listening = false;
 let transcript_final = '';
 let audioCtx = null, micStream = null, workletNode = null;
@@ -1205,6 +1207,9 @@ async function init() {
   const dbgEl = document.getElementById('dbgBar');
   if (dbgEl) { dbgEl.style.maxHeight = '120px'; dbgEl.style.borderBottom = '1px solid #3b82f6'; }
 
+  dbg('━━ Meetintel v' + APP_BUILD + ' ━━');
+  const bb = document.getElementById('buildBadge');
+  if (bb) bb.textContent = 'v' + APP_BUILD;
   dbg('Meetintel ready — provider=' + (_userSettings.provider || 'openai') +
       ' model=' + (_userSettings.model || 'gpt-4o') +
       ' anthropicKey=' + (_userSettings.hasAnthropicKey ? '✓' : '✗') +

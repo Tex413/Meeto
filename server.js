@@ -4,6 +4,13 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 
+// ── Version / build ──────────────────────────────────────────
+// Bump BUILD on every deploy so you can confirm in the UI that fresh code
+// is actually being served (visible in the debug log and at /version).
+const VERSION = '2.1.0';
+const BUILD = 8;
+const STARTED = new Date().toISOString();
+
 const PORT = parseInt(process.env.PORT || '7432');
 const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const IS_HTTPS = PUBLIC_URL.startsWith('https://');
@@ -547,6 +554,10 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { authenticated: !!userId });
   }
 
+  if (req.method === 'GET' && url === '/version') {
+    return json(res, 200, { version: VERSION, build: BUILD, started: STARTED });
+  }
+
   if (req.method === 'POST' && url === '/auth/register') {
     const body = JSON.parse(await readBody(req));
     const { email, password } = body;
@@ -686,10 +697,10 @@ const server = http.createServer(async (req, res) => {
     const htmlHdr = { 'Content-Type': 'text/html', 'Cache-Control': 'no-store, must-revalidate' };
     if (!checkToken(req)) {
       res.writeHead(200, htmlHdr);
-      return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8'));
+      return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8').replace(/__BUILD__/g, BUILD));
     }
     res.writeHead(200, htmlHdr);
-    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'));
+    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8').replace(/__BUILD__/g, `${VERSION} build ${BUILD}`));
   }
 
   // ── all routes below require auth ────────────────────────────
@@ -1128,7 +1139,7 @@ const server = http.createServer(async (req, res) => {
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      log(`Meetintel running at http://0.0.0.0:${PORT}`);
+      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
       resolve();
       // Pre-warm the local Whisper model in the background so the first
       // transcription isn't blocked on a cold download/load.
