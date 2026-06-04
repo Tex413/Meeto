@@ -47,10 +47,12 @@ Pivot from "hosted multi-user SaaS" to:
 - Data dir → Electron `app.getPath('userData')/data`. Port 7433 (avoids the 7432 demo).
 - **Launch:** `npm run electron`. (Transcription needs the Phase-3 native rebuild; UI + non-Whisper features work now.)
 
-### Phase 2 — Licensing
-- Ed25519 sign/verify (replace HMAC). Owner holds private key; public key embedded in app.
-- License payload: `{ plan, purchasedAt, updatesUntil }`. App runs forever; `updatesUntil` gates update access only.
-- In-app activation UI (enter license key). Desktop app is **license-required to run** (the free trial lives on the web demo).
+### Phase 2 — Licensing  ✅ DONE (commit 33fe5f7)
+- Ed25519 sign/verify. App embeds the PUBLIC key (`LICENSE_PUBLIC_KEY` in server.js); owner mints keys with the private key via `node tools/sign-license.js <plan> [email] [updatesDays]`.
+- Format `MEETINTEL2-<payloadB64url>.<sigB64url>`, payload `{plan,email,purchasedAt,updatesUntil}`. Stored at `DATA_DIR/license.key`.
+- Desktop gating: unlicensed → `/` serves `activate.html`; `/transcribe`, `/transcribe/refine`, `/proxy` → 402. Endpoints `/license/status`, `/license/activate`. All gates behind `DESKTOP_MODE` (web demo unaffected).
+- **KEY CUSTODY (owner):** `keys/license-private.pem` is gitignored — **back it up & keep secret**. A dev keypair was generated 2026-06-04; for production either keep it secure or regenerate (`crypto.generateKeyPairSync('ed25519')`) and replace `LICENSE_PUBLIC_KEY` in server.js. Lose the private key = can't mint new licenses; leak it = anyone can.
+- TODO later: surface license status/deactivate in Settings; enforce `updatesUntil` for update-gating (currently any valid sig = licensed).
 
 ### Phase 3 — Installer
 - `electron-builder` → NSIS `.exe`.
