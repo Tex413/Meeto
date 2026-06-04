@@ -117,6 +117,13 @@ async function initDb() {
   migrate('ALTER TABLE users ADD COLUMN reset_token TEXT');
   migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
 
+  // Data fix: an Anthropic key (sk-ant-) saved in the OpenAI slot breaks
+  // Whisper transcription and confuses provider routing. Normalize it.
+  migrate(`UPDATE user_settings SET anthropic_key = openai_key WHERE (anthropic_key IS NULL OR anthropic_key = '') AND openai_key LIKE 'sk-ant-%'`);
+  migrate(`UPDATE user_settings SET ai_provider = 'anthropic' WHERE ai_provider = 'openai' AND anthropic_key LIKE 'sk-ant-%'`);
+  migrate(`UPDATE user_settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_provider = 'anthropic' AND (ai_model IS NULL OR ai_model LIKE 'gpt%' OR ai_model LIKE 'o1%' OR ai_model LIKE 'o3%')`);
+  migrate(`UPDATE user_settings SET openai_key = NULL WHERE openai_key LIKE 'sk-ant-%'`);
+
   saveDb();
   log('Database ready:', DB_FILE);
 }
@@ -290,10 +297,21 @@ function openaiWhisper(wavBuffer, openaiKey) {
     };
     const req = https.request(opts, res => {
       let d = ''; res.on('data', c => d += c);
-      res.on('end', () => { try { resolve(JSON.parse(d).text || ''); } catch(e) { reject(new Error(d)); } });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          if (parsed.error) return reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+          resolve(parsed.text || '');
+        } catch(e) { reject(new Error(d.substring(0, 200))); }
+      });
     });
     req.on('error', reject); req.write(body); req.end();
   });
+}
+
+// True only for a usable OpenAI key (not an Anthropic key parked in the slot)
+function isRealOpenAIKey(key) {
+  return !!key && key.startsWith('sk-') && !key.startsWith('sk-ant-');
 }
 
 // ── AI proxy (Anthropic + OpenAI, unified Anthropic response format) ──
@@ -740,8 +758,8 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       provider: s?.ai_provider || 'openai',
       model: s?.ai_model || 'gpt-4o',
-      hasAnthropicKey: !!(s?.anthropic_key),
-      hasOpenaiKey: !!(s?.openai_key),
+      hasAnthropicKey: !!(s?.anthropic_key) || (s?.openai_key || '').startsWith('sk-ant-'),
+      hasOpenaiKey: isRealOpenAIKey(s?.openai_key),
       tier: user.tier,
       trialSecondsUsed: user.trial_seconds_used || 0,
       trialSecondsTotal: TRIAL_SECONDS,
@@ -904,7 +922,7 @@ const server = http.createServer(async (req, res) => {
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     ensureUserSettings(userId);
     const s = dbGet(`SELECT openai_key FROM user_settings WHERE user_id = ${userId}`);
-    if (!s?.openai_key) return json(res, 400, { error: 'no_openai_key', message: 'Add an OpenAI key in Settings to enable transcription.' });
+    if (!isRealOpenAIKey(s?.openai_key)) return json(res, 400, { error: 'no_openai_key', message: 'Whisper transcription needs an OpenAI key. Use Web Speech mode, or add an OpenAI key in Settings.' });
     const body = JSON.parse(await readBody(req));
     const { audio, sampleRate = 16000 } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
