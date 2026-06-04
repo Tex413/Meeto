@@ -32,7 +32,7 @@ app.whenReady().then(async () => {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
-    title: 'Meeto',
+    title: 'Meetintel',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

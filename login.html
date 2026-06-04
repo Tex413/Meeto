@@ -3,10 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meeto — Sign in</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<title>Meetintel — Sign in</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -199,8 +196,8 @@ input::placeholder { color: rgba(255,255,255,0.2); }
 
 <div class="card">
   <div class="logo">
-    <div class="logo-icon">☄️</div>
-    <span class="logo-name">Meeto</span>
+    <span class="logo-icon">☄️</span>
+    <span class="logo-name">Meetintel</span>
   </div>
 
   <div class="tab-row">
@@ -211,14 +208,14 @@ input::placeholder { color: rgba(255,255,255,0.2); }
   <!-- Login -->
   <div id="loginView">
     <h2>Welcome back</h2>
-    <p class="subtitle">Sign in to your Meeto workspace.</p>
+    <p class="subtitle">Sign in to your Meetintel account.</p>
     <label for="loginEmail">Email</label>
     <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()" />
     <label for="loginPwd">Password</label>
     <input type="password" id="loginPwd" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
     <p class="error" id="loginErr">Incorrect email or password.</p>
     <button class="btn" onclick="doLogin()" id="loginBtn">Sign in</button>
-    <p class="hint"><a href="/landing" target="_blank">Learn about Meeto →</a></p>
+    <p class="hint"><a href="/reset">Forgot password?</a> &nbsp;·&nbsp; <a href="/landing" target="_blank">Learn about Meetintel</a></p>
   </div>
 
   <!-- Sign up -->

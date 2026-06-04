@@ -5,12 +5,12 @@ const crypto = require('crypto');
 const https = require('https');
 
 const PORT = parseInt(process.env.PORT || '7432');
-const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const IS_HTTPS = APP_URL.startsWith('https://');
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const IS_HTTPS = PUBLIC_URL.startsWith('https://');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'meeto.sqlite');
+const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
-const LOG_FILE = path.join(DATA_DIR, 'meeto.log');
+const LOG_FILE = path.join(DATA_DIR, 'meetintel.log');
 const ENV_FILE = path.join(DATA_DIR, '.env');
 
 const TRIAL_SECONDS = 20 * 60;
@@ -114,6 +114,8 @@ async function initDb() {
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE documents ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE meetings ADD COLUMN todos TEXT');
+  migrate('ALTER TABLE users ADD COLUMN reset_token TEXT');
+  migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
 
   saveDb();
   log('Database ready:', DB_FILE);
@@ -148,7 +150,7 @@ function makeToken(userId) {
   return t;
 }
 function checkToken(req) {
-  const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
+  const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
   const token = m ? m[1] : (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return null;
   const s = sessions.get(token);
@@ -158,11 +160,11 @@ function checkToken(req) {
 }
 function setSessionCookie(res, token) {
   const secure = IS_HTTPS ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `meeto_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
+  res.setHeader('Set-Cookie', `meetintel_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
 }
 function clearSessionCookie(res) {
   const secure = IS_HTTPS ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `meeto_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
+  res.setHeader('Set-Cookie', `meetintel_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
 // ── trial helpers ──────────────────────────────────────────────
@@ -213,6 +215,31 @@ function writeEnvVar(varName, value) {
   fs.writeFileSync(ENV_FILE, c, 'utf8');
 }
 
+// ── email / password reset ─────────────────────────────────────
+async function sendResetEmail(toEmail, token) {
+  const url = `${PUBLIC_URL}/reset?token=${token}`;
+  const smtpHost = loadEnvVar('SMTP_HOST');
+  if (smtpHost) {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: parseInt(loadEnvVar('SMTP_PORT') || '587'),
+      secure: loadEnvVar('SMTP_PORT') === '465',
+      auth: { user: loadEnvVar('SMTP_USER'), pass: loadEnvVar('SMTP_PASS') }
+    });
+    await transporter.sendMail({
+      from: loadEnvVar('SMTP_FROM') || 'noreply@meetintel.io',
+      to: toEmail,
+      subject: 'Reset your Meetintel password',
+      text: `Click this link to reset your password (expires in 1 hour):\n\n${url}\n\nIf you didn't request this, ignore this email.`,
+      html: `<p>Click below to reset your Meetintel password (expires in 1 hour):</p><p><a href="${url}">${url}</a></p><p style="color:#888;font-size:12px">If you didn't request this, ignore this email.</p>`
+    });
+    return { emailed: true };
+  }
+  log('RESET LINK (no SMTP):', url);
+  return { emailed: false, url };
+}
+
 // ── request helpers ────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -247,7 +274,7 @@ function float32ToWav(samples, sampleRate) {
 
 function openaiWhisper(wavBuffer, openaiKey) {
   return new Promise((resolve, reject) => {
-    const boundary = 'meeto-' + Date.now();
+    const boundary = 'meetintel-' + Date.now();
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`),
       wavBuffer,
@@ -306,13 +333,17 @@ function proxyOpenAI(anthropicBody, openaiKey, model) {
       res.on('end', () => {
         try {
           const oai = JSON.parse(d);
+          if (oai.error) {
+            resolve({ status: 400, body: JSON.stringify({ error: oai.error.message || JSON.stringify(oai.error) }) });
+            return;
+          }
           const text = oai.choices?.[0]?.message?.content || '';
           const anthropicRes = {
             id: oai.id || 'openai', type: 'message', role: 'assistant',
             content: [{ type: 'text', text }], model: oai.model || model,
             usage: { input_tokens: oai.usage?.prompt_tokens || 0, output_tokens: oai.usage?.completion_tokens || 0 }
           };
-          resolve({ status: oai.error ? 400 : 200, body: JSON.stringify(anthropicRes) });
+          resolve({ status: 200, body: JSON.stringify(anthropicRes) });
         } catch(e) { reject(e); }
       });
     });
@@ -435,15 +466,15 @@ function ensureUserSettings(userId) {
 
 // ── Stripe / license helpers ───────────────────────────────────
 function generateLicenseKey(type) {
-  const secret = loadEnvVar('LICENSE_SECRET') || 'meeto-dev-secret';
+  const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
   const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-  return `MEETO-${payload}.${sig}`;
+  return `MEETINTEL-${payload}.${sig}`;
 }
 function verifyLicenseKey(key) {
   try {
-    const secret = loadEnvVar('LICENSE_SECRET') || 'meeto-dev-secret';
-    const m = key.match(/^MEETO-(.+)\.([A-Za-z0-9_-]+)$/);
+    const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
+    const m = key.match(/^MEETINTEL-(.+)\.([A-Za-z0-9_-]+)$/);
     if (!m) return null;
     const [, payload, sig] = m;
     const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
@@ -497,8 +528,41 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  if (req.method === 'POST' && url === '/auth/forgot') {
+    const body = JSON.parse(await readBody(req));
+    const emailSafe = (body.email || '').toLowerCase().replace(/'/g, "''");
+    const user = dbGet(`SELECT id FROM users WHERE email = '${emailSafe}'`);
+    if (user) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      db.run(`UPDATE users SET reset_token='${token}', reset_expires='${expires}' WHERE id=${user.id}`);
+      saveDb();
+      try { await sendResetEmail(emailSafe, token); } catch(e) { log('Reset email error:', e.message); }
+    }
+    return json(res, 200, { ok: true }); // always 200 to prevent email enumeration
+  }
+
+  if (req.method === 'GET' && url === '/reset') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'reset.html'), 'utf8'));
+  }
+
+  if (req.method === 'POST' && url === '/auth/reset-password') {
+    const body = JSON.parse(await readBody(req));
+    const { token, password } = body;
+    if (!token || !password || password.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
+    const tokenSafe = token.replace(/'/g, "''");
+    const user = dbGet(`SELECT id, reset_expires FROM users WHERE reset_token='${tokenSafe}'`);
+    if (!user || !user.reset_expires || new Date(user.reset_expires) < new Date()) {
+      return json(res, 400, { error: 'Reset link is invalid or has expired' });
+    }
+    db.run(`UPDATE users SET pwd_hash='${hashPwd(password)}', reset_token=NULL, reset_expires=NULL WHERE id=${user.id}`);
+    saveDb();
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && url === '/auth/logout') {
-    const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
+    const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
     if (m) sessions.delete(m[1]);
     clearSessionCookie(res);
     return json(res, 200, { ok: true });
@@ -517,12 +581,12 @@ const server = http.createServer(async (req, res) => {
         mode: isAnnual ? 'subscription' : 'payment',
         line_items: [{ price_data: {
           currency: 'usd',
-          product_data: { name: isAnnual ? 'Meeto Annual License' : 'Meeto Lifetime License' },
+          product_data: { name: isAnnual ? 'Meetintel Annual License' : 'Meetintel Lifetime License' },
           unit_amount: isAnnual ? 2995 : 11900,
           ...(isAnnual ? { recurring: { interval: 'year' } } : {})
         }, quantity: 1 }],
-        success_url: `${APP_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${APP_URL}/checkout/cancel`
+        success_url: `${PUBLIC_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${PUBLIC_URL}/checkout/cancel`
       });
       return json(res, 200, { url: session.url });
     } catch(e) { return json(res, 500, { error: e.message }); }
@@ -591,6 +655,16 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
   }
 
+  if (req.method === 'GET' && url === '/admin/reset-links') {
+    const r = db.exec(`SELECT email, reset_token, reset_expires FROM users WHERE reset_token IS NOT NULL AND reset_expires > '${new Date().toISOString()}'`);
+    const links = r.length ? r[0].values.map(v => ({
+      email: v[0],
+      url: `${PUBLIC_URL}/reset?token=${v[1]}`,
+      expires: v[2]
+    })) : [];
+    return json(res, 200, links);
+  }
+
   if (req.method === 'GET' && url === '/admin/stats') {
     const mtg = db.exec('SELECT COUNT(*) FROM meetings')[0]?.values[0][0] || 0;
     const crd = db.exec('SELECT COUNT(*) FROM cards')[0]?.values[0][0] || 0;
@@ -609,6 +683,15 @@ const server = http.createServer(async (req, res) => {
       id: v[0], email: v[1], tier: v[2], trialSecondsUsed: v[3], createdAt: v[4], licenseType: v[5], dataDeleted: !!v[6]
     })) : [];
     return json(res, 200, users);
+  }
+
+  if (req.method === 'POST' && url === '/admin/reset-password') {
+    const body = JSON.parse(await readBody(req));
+    const { targetUserId, newPassword } = body;
+    if (!newPassword || newPassword.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
+    db.run(`UPDATE users SET pwd_hash='${hashPwd(newPassword)}' WHERE id = ${parseInt(targetUserId)}`);
+    saveDb();
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/admin/grant-license') {
@@ -776,7 +859,12 @@ const server = http.createServer(async (req, res) => {
     ensureUserSettings(userId);
     const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
     const provider = s?.ai_provider || 'openai';
-    const model = s?.ai_model || 'gpt-4o';
+    const rawModel = s?.ai_model || '';
+    const isClaudeModel = rawModel.startsWith('claude');
+    const isOpenAIModel = rawModel.startsWith('gpt') || rawModel.startsWith('o1') || rawModel.startsWith('o3');
+    const model = provider === 'anthropic'
+      ? (isClaudeModel ? rawModel : 'claude-sonnet-4-6')
+      : (isOpenAIModel ? rawModel : 'gpt-4o');
     const body = await readBody(req);
     try {
       if (provider === 'anthropic') {
@@ -788,13 +876,22 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       } else {
-        const apiKey = s?.openai_key;
+        let apiKey = s?.openai_key;
         if (!apiKey) return json(res, 400, { error: 'No OpenAI API key saved. Go to Settings to add your key.' });
+        // Auto-route: if an Anthropic key was saved as the OpenAI key, use the Anthropic proxy
+        if (apiKey.startsWith('sk-ant-')) { log('auto-routing: Anthropic key detected in OpenAI slot');
+          const claudeModel = isClaudeModel ? rawModel : 'claude-sonnet-4-6';
+          const parsedBody = JSON.parse(body);
+          parsedBody.model = claudeModel;
+          const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+          res.writeHead(result.status, { 'Content-Type': 'application/json' });
+          return res.end(result.body);
+        }
         const result = await proxyOpenAI(body, apiKey, model);
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       }
-    } catch(e) { return json(res, 500, { error: e.message }); }
+    } catch(e) { log('proxy error:', e.message); return json(res, 500, { error: e.message }); }
   }
 
   // ── Transcription (OpenAI Whisper API) ───────────────────────
@@ -977,7 +1074,7 @@ const server = http.createServer(async (req, res) => {
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      log(`Meeto running at http://0.0.0.0:${PORT}`);
+      log(`Meetintel running at http://0.0.0.0:${PORT}`);
       resolve();
     });
   });

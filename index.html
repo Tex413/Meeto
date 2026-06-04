@@ -3,10 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meeto</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<title>Meetintel</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 <style>
 :root {
@@ -53,11 +50,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── App grid ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ App grid Ã¢â€â‚¬Ã¢â€â‚¬ */
 .app { display: grid; grid-template-columns: 1fr; grid-template-rows: auto auto auto auto 1fr; height: 100vh; }
 .main-area { display: flex; overflow: hidden; height: 100%; }
 
-/* ── Topbar ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Topbar Ã¢â€â‚¬Ã¢â€â‚¬ */
 .topbar {
   display: flex;
   align-items: center;
@@ -112,7 +109,7 @@ html, body {
 
 .status-txt { font-size: 11px; color: var(--text2); white-space: nowrap; font-weight: 500; }
 
-/* ── Buttons ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Buttons Ã¢â€â‚¬Ã¢â€â‚¬ */
 .btn {
   font-size: 12px; padding: 5px 11px;
   border-radius: var(--radius); cursor: pointer;
@@ -155,7 +152,7 @@ html, body {
   outline: none;
 }
 
-/* ── Key bar ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Key bar Ã¢â€â‚¬Ã¢â€â‚¬ */
 .key-bar {
   display: flex; align-items: center; gap: 10px;
   padding: 6px 16px; background: var(--warn-bg);
@@ -172,27 +169,51 @@ html, body {
 .key-bar label { font-weight: 600; white-space: nowrap; }
 .key-bar .hint { font-size: 11px; opacity: 0.8; }
 
-/* ── Controls bar ── */
-.controls-bar {
-  display: flex; align-items: center; gap: 12px;
-  padding: 5px 16px;
-  background: rgba(10,13,20,0.8);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap; flex-shrink: 0;
-}
-.ctrl-group { display: flex; align-items: center; gap: 6px; }
-.ctrl-group label { font-size: 10px; font-weight: 600; color: var(--text3); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.07em; }
-.ctrl-group input[type=range] { width: 80px; accent-color: var(--accent); }
-.ctrl-group input[type=number] {
-  width: 48px; font-size: 11px; padding: 3px 6px;
-  border-radius: var(--radius); border: 1px solid var(--border);
-  background: var(--surface); color: var(--text);
-  text-align: center; font-family: inherit; outline: none;
-}
-.ctrl-val { font-size: 11px; color: var(--text2); font-weight: 500; min-width: 18px; }
-.ctrl-sep { width: 1px; height: 16px; background: var(--border2); }
-#costDisplay { font-size: 11px; color: var(--text3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.left { display: flex; flex-direction: column; border-right: 0.5px solid var(--border); overflow: hidden; }
+.panel-hdr { padding: 8px 14px; border-bottom: 0.5px solid var(--border); font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; display: flex; align-items: center; justify-content: space-between; }
+.transcript { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 14px; line-height: 1.75; color: var(--text); background: var(--surface); }
+.transcript .ph { color: var(--text3); font-size: 13px; }
+.transcript .interim { color: var(--text3); font-style: italic; }
+.turn { margin-bottom: 10px; padding: 8px 10px; border-radius: var(--radius); background: var(--surface2); border-left: 2px solid var(--border2); }
+.turn-time { font-size: 10px; color: var(--text3); margin-bottom: 3px; }
+.turn-text { font-size: 13px; line-height: 1.65; color: var(--text); }
+.turn-interim { font-size: 13px; line-height: 1.65; color: var(--text3); font-style: italic; padding: 8px 10px; }
+.transcript .interim { color: var(--text3); font-style: italic; }
+.ctx-area { border-top: 0.5px solid var(--border); padding: 10px 14px; background: var(--surface); }
+.ctx-area label { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 5px; }
+.ctx-area textarea { width: 100%; font-size: 12px; line-height: 1.55; padding: 7px 9px; border-radius: var(--radius); border: 0.5px solid var(--border2); background: var(--surface2); color: var(--text); resize: none; font-family: inherit; height: 78px; }
+.right { display: flex; flex-direction: column; background: var(--surface2); overflow: hidden; }
+.cards { flex: 1; overflow-y: auto; padding: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; align-content: start; }
+.ph-cards { text-align: center; padding: 28px 16px; color: var(--text3); font-size: 13px; line-height: 1.6; }
+.ph-cards i { font-size: 26px; display: block; margin-bottom: 8px; opacity: 0.4; }
+.card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px; animation: slide 0.25s ease; }
+@keyframes slide { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+.tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; padding: 2px 7px; border-radius: 99px; display: inline-block; margin-bottom: 5px; }
+.tag-foundry { background: var(--blue-bg); color: var(--blue); }
+.tag-nog { background: var(--green-bg); color: var(--green); }
+.tag-technical { background: var(--amber-bg); color: var(--amber); }
+.tag-talking-point { background: var(--pink-bg); color: var(--pink); }
+.tag-general { background: var(--surface2); color: var(--text2); }
+.tag-fact-check { background: var(--danger-bg); color: var(--danger-text); }
+.tag-action-item { background: var(--warn-bg); color: var(--warn-text); border: 0.5px solid var(--warn-border); }
+.card-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.card-body { font-size: 13px; line-height: 1.65; color: var(--text2); }
+.card-body code { font-family: 'Consolas', monospace; font-size: 11px; background: var(--surface2); padding: 1px 4px; border-radius: 3px; color: var(--text); }
+.thinking-card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 11px 13px; }
+.dots { display: flex; gap: 4px; align-items: center; height: 18px; }
+.dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--text3); animation: bop 1.1s infinite; }
+.dots span:nth-child(2){animation-delay:.2s}
+.dots span:nth-child(3){animation-delay:.4s}
+@keyframes bop { 0%,80%,100%{transform:scale(0.8);opacity:0.5}40%{transform:scale(1.1);opacity:1} }
+.countdown { font-size: 11px; color: var(--text3); }
+.controls-bar { display: flex; align-items: center; gap: 16px; padding: 7px 16px; background: var(--surface2); border-bottom: 0.5px solid var(--border); flex-wrap: nowrap; overflow-x: auto; }
+.ctrl-group { display: flex; align-items: center; gap: 7px; }
+.ctrl-group label { font-size: 11px; font-weight: 600; color: var(--text2); white-space: nowrap; }
+.ctrl-group input[type=range] { width: 90px; }
+.ctrl-group input[type=number] { width: 54px; font-size: 12px; padding: 3px 6px; border-radius: var(--radius); border: 0.5px solid var(--border2); background: var(--surface); color: var(--text); text-align: center; }
+.ctrl-val { font-size: 12px; color: var(--text); font-weight: 500; min-width: 20px; }
+.ctrl-sep { width: 0.5px; height: 18px; background: var(--border2); }
 
 .mode-btn {
   font-size: 11px; padding: 4px 9px;
@@ -213,14 +234,14 @@ html, body {
 }
 .ptt-hint.active { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
 
-/* ── Debug bar ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Debug bar Ã¢â€â‚¬Ã¢â€â‚¬ */
 #dbgBar {
   overflow: hidden; max-height: 0; border: none;
   background: #080f1e; color: #60a5fa;
   font-size: 11px; font-family: 'Consolas', monospace;
 }
 
-/* ── Left panel ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Left panel Ã¢â€â‚¬Ã¢â€â‚¬ */
 .left {
   display: flex; flex-direction: column;
   border-right: 1px solid var(--border);
@@ -235,7 +256,7 @@ html, body {
   background: rgba(10,13,20,0.5); flex-shrink: 0;
 }
 
-/* ── Transcript ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Transcript Ã¢â€â‚¬Ã¢â€â‚¬ */
 .transcript {
   flex: 1; overflow-y: auto;
   padding: 12px 14px; font-size: 13px;
@@ -258,12 +279,12 @@ html, body {
 .turn-text { font-size: 13px; line-height: 1.65; color: var(--text); }
 .turn-interim { font-size: 13px; line-height: 1.65; color: var(--text3); font-style: italic; padding: 8px 12px; }
 .turn.mine { background: rgba(255,255,255,0.025); border-left-color: rgba(255,255,255,0.12); }
-.turn.mine .turn-time::after { content: ' · you'; color: var(--text3); }
+.turn.mine .turn-time::after { content: ' Ã‚Â· you'; color: var(--text3); }
 .turn.mine:hover { background: rgba(255,255,255,0.04); }
 .turn.theirs { background: rgba(59,130,246,0.07); border-left-color: #3b82f6; }
 .turn.theirs:hover { background: rgba(59,130,246,0.11); }
 
-/* ── Context area ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Context area Ã¢â€â‚¬Ã¢â€â‚¬ */
 .ctx-area { border-top: 1px solid var(--border); padding: 10px 14px; background: var(--surface); flex-shrink: 0; }
 .ctx-area label {
   font-size: 10px; font-weight: 700; color: var(--text3);
@@ -279,7 +300,7 @@ html, body {
 }
 .ctx-area textarea:focus { border-color: var(--accent-border); }
 
-/* ── Right panel / Cards ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Right panel / Cards Ã¢â€â‚¬Ã¢â€â‚¬ */
 .right { display: flex; flex-direction: column; background: var(--bg); overflow: hidden; flex: 1; min-width: 300px; }
 
 .cards {
@@ -294,7 +315,7 @@ html, body {
 .ph-cards { text-align: center; padding: 48px 20px; color: var(--text3); font-size: 13px; line-height: 1.7; grid-column: 1 / -1; }
 .ph-cards i { font-size: 30px; display: block; margin-bottom: 10px; opacity: 0.25; }
 
-/* ── Cards ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Cards Ã¢â€â‚¬Ã¢â€â‚¬ */
 .card {
   background: var(--surface2); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 14px 16px;
@@ -360,7 +381,7 @@ html, body {
   border-radius: 4px; color: var(--text); border: 1px solid var(--border);
 }
 
-/* ── Thinking card ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Thinking card Ã¢â€â‚¬Ã¢â€â‚¬ */
 .thinking-card {
   background: var(--surface2); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 14px 16px;
@@ -372,11 +393,11 @@ html, body {
 
 .countdown { font-size: 11px; color: var(--text3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-/* ── Resize handle ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Resize handle Ã¢â€â‚¬Ã¢â€â‚¬ */
 .resize-handle { width: 4px; background: var(--border); cursor: col-resize; flex-shrink: 0; transition: background 0.15s; }
 .resize-handle:hover, .resize-handle.dragging { background: #3b82f6; }
 
-/* ── History panel ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ History panel Ã¢â€â‚¬Ã¢â€â‚¬ */
 .history-panel {
   display: none; position: fixed; top: 0; right: 0;
   width: 480px; height: 100vh;
@@ -427,7 +448,7 @@ html, body {
 .hist-card-body { font-size: 11px; color: var(--text2); line-height: 1.6; }
 .hist-card-time { font-size: 10px; color: var(--text3); margin-top: 4px; }
 
-/* ── Badges ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Badges Ã¢â€â‚¬Ã¢â€â‚¬ */
 .meeting-badge {
   font-size: 11px; padding: 3px 10px; border-radius: 99px;
   background: var(--surface2); color: var(--text2);
@@ -445,7 +466,7 @@ html, body {
 }
 .trial-badge.expired { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
 
-/* ── Overlay modals ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Overlay modals Ã¢â€â‚¬Ã¢â€â‚¬ */
 .overlay {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.72);
@@ -489,7 +510,7 @@ html, body {
 .paywall-icon { font-size: 44px; text-align: center; margin-bottom: 16px; }
 .paywall-features { list-style: none; margin-bottom: 22px; }
 .paywall-features li { font-size: 13px; padding: 5px 0; color: var(--text2); display: flex; align-items: center; gap: 8px; }
-.paywall-features li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
+.paywall-features li::before { content: 'Ã¢Å“â€œ'; color: var(--green); font-weight: 700; flex-shrink: 0; }
 
 .btn-upgrade {
   width: 100%; padding: 12px; background: var(--accent);
@@ -516,7 +537,7 @@ html, body {
 }
 .license-input-row button:hover { background: var(--surface3); }
 
-/* ── Todo panel ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Todo panel Ã¢â€â‚¬Ã¢â€â‚¬ */
 .todo-panel { display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--surface); max-height: 220px; }
 .todo-hdr { display: flex; align-items: center; padding: 7px 12px; gap: 7px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; flex-shrink: 0; }
 .todo-hdr h3 { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 0.09em; flex: 1; }
@@ -554,7 +575,7 @@ html, body {
 }
 .todo-add-btn:hover { background: var(--surface3); }
 
-/* ── Docs panel ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Docs panel Ã¢â€â‚¬Ã¢â€â‚¬ */
 .docs-panel { display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--surface); max-height: 180px; flex-shrink: 0; }
 .docs-hdr { display: flex; align-items: center; padding: 7px 12px; gap: 7px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; flex-shrink: 0; }
 .docs-hdr h3 { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 0.09em; flex: 1; margin: 0; }
@@ -580,7 +601,7 @@ html, body {
 }
 .docs-upload-btn:hover { background: var(--accent-bg); color: var(--blue); border-color: var(--accent-border); }
 
-/* ── Export button ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ Export button Ã¢â€â‚¬Ã¢â€â‚¬ */
 .export-btn {
   font-size: 11px; padding: 4px 9px;
   border-radius: var(--radius); cursor: pointer;
@@ -591,7 +612,7 @@ html, body {
 }
 .export-btn:hover { background: var(--surface2); }
 
-/* ── MSFT panel ── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬ MSFT panel Ã¢â€â‚¬Ã¢â€â‚¬ */
 .msft-panel { padding: 10px 12px; background: var(--surface2); border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; }
 .msft-code { font-family: Consolas, monospace; font-size: 20px; font-weight: 700; letter-spacing: 0.2em; color: var(--blue); background: var(--blue-bg); padding: 5px 14px; border-radius: var(--radius); display: inline-block; margin: 5px 0; }
 .msft-btn { font-size: 11px; padding: 4px 10px; border-radius: var(--radius); cursor: pointer; border: 1px solid #2563eb; background: #2563eb; color: #fff; font-weight: 600; white-space: nowrap; font-family: inherit; transition: background 0.15s; }
@@ -606,8 +627,8 @@ html, body {
   <div class="topbar">
     <!-- Brand -->
     <div class="tb-brand">
-      <div class="brand-icon">☄️</div>
-      <span class="brand-name">Meeto</span>
+      <div class="brand-icon">Ã¢Ëœâ€žÃ¯Â¸Â</div>
+      <span class="brand-name">Meetintel</span>
     </div>
     <div class="topbar-sep"></div>
     <!-- Session -->
@@ -643,8 +664,8 @@ html, body {
   <div class="controls-bar">
     <div class="ctrl-group">
       <label title="Web Speech: fast, cloud-based (Google). Whisper: accurate, fully local."><i class="ti ti-device-audio-tape" aria-hidden="true"></i> STT</label>
-      <button class="mode-btn" id="btnWebSpeech" onclick="setSttMode('webspeech')" title="Web Speech API — requires Chrome browser with Google speech keys. Does NOT work in Electron.">Web Speech <span style="font-weight:400;opacity:0.7">Chrome only</span></button>
-      <button class="mode-btn active" id="btnWhisper" onclick="setSttMode('whisper')" title="Whisper local AI — accurate, fully private, works offline, ~2-4s delay per chunk">Whisper <span style="font-weight:400;opacity:0.7">accurate·local</span></button>
+      <button class="mode-btn" id="btnWebSpeech" onclick="setSttMode('webspeech')" title="Web Speech API Ã¢â‚¬â€ requires Chrome browser with Google speech keys. Does NOT work in Electron.">Web Speech <span style="font-weight:400;opacity:0.7">Chrome only</span></button>
+      <button class="mode-btn active" id="btnWhisper" onclick="setSttMode('whisper')" title="Whisper local AI Ã¢â‚¬â€ accurate, fully private, works offline, ~2-4s delay per chunk">Whisper <span style="font-weight:400;opacity:0.7">accurateÃ‚Â·local</span></button>
     </div>
     <div class="ctrl-sep"></div>
     <div class="ctrl-group">
@@ -673,16 +694,16 @@ html, body {
     </div>
     <div class="ctrl-sep"></div>
     <div class="ctrl-group">
-      <label title="Audio preprocessing — changes take effect on next Start listening"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> Audio</label>
+      <label title="Audio preprocessing Ã¢â‚¬â€ changes take effect on next Start listening"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i> Audio</label>
       <label class="mode-btn" style="gap:5px;cursor:pointer;" title="Echo cancellation removes your own speaker output from the mic"><input type="checkbox" id="cbEcho" checked onchange="onAudioSettingChange()"> Echo</label>
       <label class="mode-btn" style="gap:5px;cursor:pointer;" title="Noise suppression filters out background noise"><input type="checkbox" id="cbNoise" checked onchange="onAudioSettingChange()"> Denoise</label>
-      <label class="mode-btn" style="gap:5px;cursor:pointer;" title="Auto gain control adjusts mic level automatically — disable if using manual Boost"><input type="checkbox" id="cbAGC" checked onchange="onAudioSettingChange()"> AGC</label>
+      <label class="mode-btn" style="gap:5px;cursor:pointer;" title="Auto gain control adjusts mic level automatically Ã¢â‚¬â€ disable if using manual Boost"><input type="checkbox" id="cbAGC" checked onchange="onAudioSettingChange()"> AGC</label>
       <div class="ctrl-sep"></div>
-      <label title="Manual gain multiplier applied after capture — raise if Whisper misses speech">Boost</label>
+      <label title="Manual gain multiplier applied after capture Ã¢â‚¬â€ raise if Whisper misses speech">Boost</label>
       <input type="number" id="gainInput" value="10" min="1" max="30" step="1" style="width:46px;font-size:12px;padding:3px 6px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--surface);color:var(--text);text-align:center;" oninput="setGain(this.value)" />
-      <span class="ctrl-val">×</span>
+      <span class="ctrl-val">Ãƒâ€”</span>
       <div class="ctrl-sep"></div>
-      <label title="Whisper chunk size — larger = more complete sentences but higher latency">Chunk</label>
+      <label title="Whisper chunk size Ã¢â‚¬â€ larger = more complete sentences but higher latency">Chunk</label>
       <select id="chunkSelect" class="mic-select" style="width:60px;" onchange="CHUNK_SEC = parseInt(this.value)">
         <option value="3">3 s</option>
         <option value="4" selected>4 s</option>
@@ -723,17 +744,17 @@ html, body {
       </div>
       <div id="msftPanel" style="display:none;"></div>
       <div id="todoBody" class="todo-body">
-        <div class="todo-empty" id="todoEmpty">No items yet — type below or click Extract</div>
+        <div class="todo-empty" id="todoEmpty">No items yet Ã¢â‚¬â€ type below or click Extract</div>
       </div>
       <div class="todo-input-row" id="todoInputRow">
-        <input type="text" id="todoInput" placeholder="Add action item… (Enter to add)" onkeydown="todoKeydown(event)" />
+        <input type="text" id="todoInput" placeholder="Add action itemÃ¢â‚¬Â¦ (Enter to add)" onkeydown="todoKeydown(event)" />
         <button class="todo-add-btn" onclick="addTodo()"><i class="ti ti-plus" aria-hidden="true"></i></button>
       </div>
     </div>
 
     <div class="ctx-area">
-        <label>Context — paste notes, study guide excerpts, client specifics</label>
-        <textarea id="ctx" placeholder="e.g. NOG (NYSE: NOG) uses Palantir Foundry for well master, budget, analytics. New ERP must integrate via REST API. Key contacts: Chad Schneider (Asst Controller), Gus Bell. Pat Schooler is Integration Architect — owns ERP-Foundry design and delivery. NOG has 12,000+ wells, 100+ operators, hundreds of thousands of monthly JIB transactions..."></textarea>
+        <label>Context Ã¢â‚¬â€ paste notes, study guide excerpts, client specifics</label>
+        <textarea id="ctx" placeholder="e.g. NOG (NYSE: NOG) uses Palantir Foundry for well master, budget, analytics. New ERP must integrate via REST API. Key contacts: Chad Schneider (Asst Controller), Gus Bell. Pat Schooler is Integration Architect Ã¢â‚¬â€ owns ERP-Foundry design and delivery. NOG has 12,000+ wells, 100+ operators, hundreds of thousands of monthly JIB transactions..."></textarea>
       </div>
       <div class="docs-panel" id="docsPanel">
         <div class="docs-hdr" onclick="toggleDocs()">
@@ -747,7 +768,7 @@ html, body {
           <i class="ti ti-chevron-down" id="docsChevron" aria-hidden="true" style="font-size:13px;color:var(--text3);"></i>
         </div>
         <div id="docsBody" class="docs-body">
-          <div class="docs-empty">No documents — add .pdf, .docx, .txt, .md, or .html files to enhance card context</div>
+          <div class="docs-empty">No documents Ã¢â‚¬â€ add .pdf, .docx, .txt, .md, or .html files to enhance card context</div>
         </div>
       </div>
     </div>
@@ -836,7 +857,7 @@ function updateTerse(val) {
 }
 
 
-// ── meeting state ─────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ meeting state Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let currentMeetingId = null;
 let autoSaveTimer = null;
 let currentHistMeetingId = null;
@@ -853,7 +874,7 @@ async function startMeeting() {
     if (r.status === 402) { openPaywall(); return; }
     const d = await r.json();
     currentMeetingId = d.id;
-    document.getElementById('meetingBadge').textContent = '● ' + title;
+    document.getElementById('meetingBadge').textContent = 'Ã¢â€”Â ' + title;
     document.getElementById('meetingBadge').className = 'meeting-badge recording';
     document.getElementById('startMeetingBtn').style.display = 'none';
     document.getElementById('endMeetingBtn').style.display = '';
@@ -911,7 +932,7 @@ async function saveCardsToDb(cards, transcriptSnapshot) {
   } catch(e) {}
 }
 
-// ── history panel ─────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ history panel Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 async function openHistory() {
   document.getElementById('historyPanel').classList.add('open');
   document.getElementById('histDetail').classList.remove('open');
@@ -942,7 +963,7 @@ async function loadHistoryList() {
     meetings.forEach(m => {
       const el = document.createElement('div');
       el.className = 'hist-item';
-      const started = m.started_at ? new Date(m.started_at).toLocaleString() : '—';
+      const started = m.started_at ? new Date(m.started_at).toLocaleString() : 'Ã¢â‚¬â€';
       const duration = m.started_at && m.ended_at
         ? Math.round((new Date(m.ended_at) - new Date(m.started_at)) / 60000) + ' min'
         : 'in progress';
@@ -1018,7 +1039,7 @@ async function deleteMeeting() {
   } catch(e) {}
 }
 
-// ── todo list ─────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ todo list Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let todos = [];
 let todoOpen = true;
 
@@ -1061,9 +1082,9 @@ function renderTodos() {
   const empty = document.getElementById('todoEmpty');
   const count = document.getElementById('todoCount');
   const open = todos.filter(t => !t.done).length;
-  count.textContent = todos.length + ' item' + (todos.length !== 1 ? 's' : '') + (open < todos.length ? ' · ' + (todos.length - open) + ' done' : '');
+  count.textContent = todos.length + ' item' + (todos.length !== 1 ? 's' : '') + (open < todos.length ? ' Ã‚Â· ' + (todos.length - open) + ' done' : '');
   if (!todos.length) {
-    body.innerHTML = '<div class="todo-empty" id="todoEmpty">No items yet — type below or click Extract</div>';
+    body.innerHTML = '<div class="todo-empty" id="todoEmpty">No items yet Ã¢â‚¬â€ type below or click Extract</div>';
     return;
   }
   body.innerHTML = todos.map(t => `
@@ -1076,9 +1097,9 @@ function renderTodos() {
 
 async function aiExtractTodos() {
   const transcript = (transcript_final || '').trim();
-  if (wordCount(transcript) < 20) { alert('Not enough transcript yet — speak more first.'); return; }
+  if (wordCount(transcript) < 20) { alert('Not enough transcript yet Ã¢â‚¬â€ speak more first.'); return; }
   const btn = document.querySelector('.todo-ai-btn');
-  btn.innerHTML = '<i class="ti ti-loader" aria-hidden="true"></i> Extracting…';
+  btn.innerHTML = '<i class="ti ti-loader" aria-hidden="true"></i> ExtractingÃ¢â‚¬Â¦';
   btn.disabled = true;
   try {
     const resp = await fetch('/proxy', {
@@ -1086,7 +1107,7 @@ async function aiExtractTodos() {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 600,
-        system: 'Extract action items and to-dos from this meeting transcript. Return ONLY a JSON array of strings — each string is one clear, concise action item starting with a verb. No markdown, no explanation. If no clear action items exist, return []. Example: ["Follow up with Chad on DOI migration timeline","Send integration architecture doc to Tyler","Schedule Phase 1 kickoff for week of July 13"]',
+        system: 'Extract action items and to-dos from this meeting transcript. Return ONLY a JSON array of strings Ã¢â‚¬â€ each string is one clear, concise action item starting with a verb. No markdown, no explanation. If no clear action items exist, return []. Example: ["Follow up with Chad on DOI migration timeline","Send integration architecture doc to Tyler","Schedule Phase 1 kickoff for week of July 13"]',
         messages: [{ role: 'user', content: 'Transcript:\n\n' + transcript.split(' ').slice(-400).join(' ') }]
       })
     });
@@ -1104,7 +1125,7 @@ async function aiExtractTodos() {
               added++;
             }
           });
-          if (!added) alert('No new action items found — all already captured or none detected.');
+          if (!added) alert('No new action items found Ã¢â‚¬â€ all already captured or none detected.');
         }
       }
     }
@@ -1145,13 +1166,13 @@ function exportTodos() {
   a.click();
 }
 
-// ── PTT keyboard listeners
+// Ã¢â€â‚¬Ã¢â€â‚¬ PTT keyboard listeners
 // PTT keyboard listeners
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !e.repeat) {
     iAmTalking = true;
     const hint = document.getElementById('pttHint');
-    if (hint) { hint.textContent = '🔴 YOUR VOICE'; hint.classList.add('active'); }
+    if (hint) { hint.textContent = 'Ã°Å¸â€Â´ YOUR VOICE'; hint.classList.add('active'); }
   }
 });
 document.addEventListener('keyup', e => {
@@ -1179,8 +1200,9 @@ async function init() {
   populateMicList();
   stopViz();
 
-  // auto-open settings if no API key configured
+  // show setup guidance if no API key configured
   if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
+    showSetupCard();
     setTimeout(openSettings, 600);
   }
 }
@@ -1228,7 +1250,7 @@ function setGain(val) {
 
 function onAudioSettingChange() {
   if (listening) {
-    dbg('Audio setting changed — restart listening to apply mic constraints');
+    dbg('Audio setting changed Ã¢â‚¬â€ restart listening to apply mic constraints');
     document.getElementById('stxt').textContent = 'Restart to apply';
   }
 }
@@ -1261,7 +1283,7 @@ async function initAudioGraph() {
 
   const source = audioCtx.createMediaStreamSource(micStream);
 
-  // Boost quiet mic input — Windows mic gain is often very low (RMS ~0.005 → ~0.05 after 10x)
+  // Boost quiet mic input Ã¢â‚¬â€ Windows mic gain is often very low (RMS ~0.005 Ã¢â€ â€™ ~0.05 after 10x)
   _gainNode = audioCtx.createGain();
   _gainNode.gain.value = parseFloat(document.getElementById('gainInput').value) || 10;
   const gainNode = _gainNode;
@@ -1282,7 +1304,7 @@ async function initAudioGraph() {
   silentGain.gain.value = 0;
   analyserNode.connect(silentGain);
   silentGain.connect(audioCtx.destination);
-  dbg('Audio graph: source → gain(10x) → limiter → analyser. sampleRate=' + audioCtx.sampleRate);
+  dbg('Audio graph: source Ã¢â€ â€™ gain(10x) Ã¢â€ â€™ limiter Ã¢â€ â€™ analyser. sampleRate=' + audioCtx.sampleRate);
   startViz();
   return limiter;
 }
@@ -1308,7 +1330,7 @@ function copyDbgLog() {
   );
 }
 
-// Visible debug helper — appends timestamped lines to the log
+// Visible debug helper Ã¢â‚¬â€ appends timestamped lines to the log
 function dbg(msg) {
   console.log('[dbg]', msg);
   const log = document.getElementById('dbgLog');
@@ -1327,7 +1349,7 @@ async function startWebSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert('Web Speech API not available in this browser. Switch to Whisper.'); return; }
 
-  // Viz (best-effort — Web Speech manages its own mic internally)
+  // Viz (best-effort Ã¢â‚¬â€ Web Speech manages its own mic internally)
   initAudioGraph();
 
   recognition = new SR();
@@ -1351,7 +1373,7 @@ async function startWebSpeech() {
     dbg('Web Speech error: ' + ev.error);
     if (ev.error === 'not-allowed') { alert('Microphone access denied.'); stopListen(); return; }
     if (ev.error === 'network') {
-      dbg('Web Speech: Electron does not support Web Speech API (requires Chrome with Google keys) — switching to Whisper');
+      dbg('Web Speech: Electron does not support Web Speech API (requires Chrome with Google keys) Ã¢â‚¬â€ switching to Whisper');
       stopListen();
       setTimeout(() => { setSttMode('whisper'); startWhisper(); }, 200);
       return;
@@ -1363,7 +1385,7 @@ async function startWebSpeech() {
     dbg('Web Speech: ended, restarting=' + listening);
     if (!listening) return;
     const now = Date.now();
-    if (now - _lastSpeechRestart < 600) { dbg('Web Speech: restart loop detected — stopping'); stopListen(); return; }
+    if (now - _lastSpeechRestart < 600) { dbg('Web Speech: restart loop detected Ã¢â‚¬â€ stopping'); stopListen(); return; }
     _lastSpeechRestart = now;
     try { recognition.start(); } catch(e) {}
   };
@@ -1388,13 +1410,13 @@ async function startWhisper() {
   processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
   processorNode.onaudioprocess = ev => {
     spCalls++;
-    if (spCalls === 1) dbg('ScriptProcessor firing — collecting audio');
+    if (spCalls === 1) dbg('ScriptProcessor firing Ã¢â‚¬â€ collecting audio');
     if (spCalls % 100 === 0) dbg('SP calls: ' + spCalls + '  buf: ' + _sampleBuf.length + '  queue: ' + _chunkQueue.length);
     const data = ev.inputBuffer.getChannelData(0);
     for (let i = 0; i < data.length; i++) _sampleBuf.push(data[i]);
     const targetLen = audioCtx.sampleRate * CHUNK_SEC;
     while (_sampleBuf.length >= targetLen) {
-      dbg('Chunk ready — queuing for Whisper');
+      dbg('Chunk ready Ã¢â‚¬â€ queuing for Whisper');
       queueChunk(new Float32Array(_sampleBuf.splice(0, targetLen)), iAmTalking);
     }
   };
@@ -1404,7 +1426,7 @@ async function startWhisper() {
   // Fallback: if ScriptProcessor never fires after 3 s, switch to MediaRecorder
   const spCheckTimer = setTimeout(() => {
     if (spCalls === 0 && listening) {
-      dbg('ScriptProcessor never fired — switching to MediaRecorder');
+      dbg('ScriptProcessor never fired Ã¢â‚¬â€ switching to MediaRecorder');
       processorNode?.disconnect(); processorNode = null;
       startMediaRecorder(source);
     }
@@ -1422,7 +1444,7 @@ async function startWhisper() {
   startCountdown();
 }
 
-// MediaRecorder fallback — records CHUNK_SEC-second clips, decodes to PCM, sends to Whisper
+// MediaRecorder fallback Ã¢â‚¬â€ records CHUNK_SEC-second clips, decodes to PCM, sends to Whisper
 let mediaRecorder = null;
 function startMediaRecorder() {
   if (!micStream) return;
@@ -1518,7 +1540,7 @@ function queueChunk(samples, isMe, nativeRate) {
   if (rms < 0.005) { dbg('Chunk: rms=' + rms.toFixed(4) + ' (silent, skip)'); return; }
 
   // Frame-level VAD: count 20ms frames above speech threshold
-  // Ambient noise (10x boosted) stays ~0.02–0.04 rms; speech phonemes hit 0.08+
+  // Ambient noise (10x boosted) stays ~0.02Ã¢â‚¬â€œ0.04 rms; speech phonemes hit 0.08+
   const sr = audioCtx?.sampleRate || 48000;
   const fSize = Math.round(sr * 0.02);
   let activeFrames = 0, totalFrames = 0;
@@ -1535,7 +1557,7 @@ function queueChunk(samples, isMe, nativeRate) {
     return;
   }
 
-  dbg('Chunk: ' + samples.length + ' samples  rms=' + rms.toFixed(4) + '  active=' + (activeRatio*100).toFixed(0) + '%  → Whisper');
+  dbg('Chunk: ' + samples.length + ' samples  rms=' + rms.toFixed(4) + '  active=' + (activeRatio*100).toFixed(0) + '%  Ã¢â€ â€™ Whisper');
   _chunkQueue.push({ samples, isMe, nativeRate: nativeRate || audioCtx?.sampleRate || CAPTURE_RATE });
   if (!_chunkProcessing) processChunkQueue();
 }
@@ -1569,7 +1591,7 @@ async function processChunkQueue() {
   while (_chunkQueue.length) {
     const { samples, isMe, nativeRate } = _chunkQueue.shift();
     try {
-      dbg('Transcribing ' + samples.length + ' samples @ ' + nativeRate + ' Hz → resampling to 16kHz');
+      dbg('Transcribing ' + samples.length + ' samples @ ' + nativeRate + ' Hz Ã¢â€ â€™ resampling to 16kHz');
       const resampled = await resampleTo16k(samples, nativeRate);
       const resp = await fetch('/transcribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1578,8 +1600,17 @@ async function processChunkQueue() {
       if (resp.status === 402) { stopListen(); openPaywall(); return; }
       if (resp.status === 400) {
         const d = await resp.json();
-        if (d.error === 'no_openai_key') { stopListen(); openSettings(); return; }
+        if (d.error === 'no_openai_key') {
+          stopListen();
+          showApiError('No OpenAI key saved Ã¢â‚¬â€ transcription requires an OpenAI API key.');
+          openSettings();
+          return;
+        }
+        stopListen();
+        showApiError(d.message || d.error || 'Transcription failed.');
+        return;
       }
+      if (!resp.ok) { stopListen(); showApiError('Transcription error (HTTP ' + resp.status + '). Check your API key in Settings.'); return; }
       const { text } = await resp.json();
       await loadUserSettings(); // refresh trial counter
       dbg('Whisper result: ' + JSON.stringify(text));
@@ -1589,7 +1620,7 @@ async function processChunkQueue() {
         pushTurn(clean, isMe);
         renderTranscript();
       }
-    } catch(e) { console.error('[transcribe] error:', e); }
+    } catch(e) { stopListen(); showApiError('Transcription failed: ' + e.message); }
   }
   _chunkProcessing = false;
 }
@@ -1685,7 +1716,7 @@ async function maybeAnalyze() {
     ? 'one phrase or key term only'
     : terseLevel === 2
     ? '1-2 short sentences with the key fact'
-    : 'full answer — include code blocks with ```lang syntax if code was requested, numbered steps if procedural, specific values/names/syntax where relevant. Match the depth the conversation demands.';
+    : 'full answer Ã¢â‚¬â€ include code blocks with ```lang syntax if code was requested, numbered steps if procedural, specific values/names/syntax where relevant. Match the depth the conversation demands.';
 
   const maxTokens = terseLevel === 3 ? 2000 : 800;
 
@@ -1694,7 +1725,7 @@ FACT-CHECK MODE: You are reviewing STATEMENTS MADE BY THE USER (the consultant).
 - Flag anything technically inaccurate, imprecise, or incomplete with a card tagged "fact-check"
 - Confirm things that are correct with a brief affirmation only if they're non-obvious
 - If everything said is accurate, return []
-- Be direct — "Incorrect: X is actually Y" or "Imprecise: should clarify Z"
+- Be direct Ã¢â‚¬â€ "Incorrect: X is actually Y" or "Imprecise: should clarify Z"
 ` : '';
 
   const system = `You are a real-time meeting intelligence assistant surfacing insight cards during a live technical conversation.${factCheckAddendum}
@@ -1703,20 +1734,20 @@ ${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}
 
 RULES:
 - Only generate cards for topics actually mentioned in the recent transcript
-- If the speaker asked for code, syntax, or an example — PROVIDE IT in the card body. Do not say "see documentation". Write the actual code.
-- If the speaker asked "how do you do X" — answer it directly, step by step if needed
+- If the speaker asked for code, syntax, or an example Ã¢â‚¬â€ PROVIDE IT in the card body. Do not say "see documentation". Write the actual code.
+- If the speaker asked "how do you do X" Ã¢â‚¬â€ answer it directly, step by step if needed
 - If the topic is trivial or off-topic (sports scores, small talk), return []
-- The user is a senior technical consultant — skip basics, give precision
+- The user is a senior technical consultant Ã¢â‚¬â€ skip basics, give precision
 
 TERSENESS LEVEL: ${tersePrompt}
 
-CARD FORMAT — return ONLY a valid JSON array, no markdown fences, no explanation outside the JSON:
+CARD FORMAT Ã¢â‚¬â€ return ONLY a valid JSON array, no markdown fences, no explanation outside the JSON:
 [{"tag":"foundry|nog|technical|talking-point|general|action-item","title":"max 6 words","body":"${bodyInstruction}"}]
 
 Use tag "action-item" when someone commits to a task, follow-up, or next step (e.g. "I'll send that over", "let's schedule a call", "we need to follow up on X"). The title should be the action as a verb phrase.
 
 For code in body, use: \n\`\`\`python\ncode here\n\`\`\`
-For multiple cards keep them focused — better one deep card than three shallow ones.
+For multiple cards keep them focused Ã¢â‚¬â€ better one deep card than three shallow ones.
 If nothing noteworthy, return [].`;
 
   try {
@@ -1749,16 +1780,20 @@ If nothing noteworthy, return [].`;
           else dbg('Analysis: no cards generated');
         } catch(e) { dbg('Card parse error: ' + e.message); }
       } else {
-        dbg('Analysis: model returned no JSON array — ' + raw.substring(0,80));
+        dbg('Analysis: model returned no JSON array Ã¢â‚¬â€ ' + raw.substring(0,80));
       }
     } else if (data.error) {
-      dbg('API error: ' + (data.error.message || JSON.stringify(data.error)));
+      const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
+      dbg('API error: ' + msg);
+      setStatus('error', 'AI error Ã¢â‚¬â€ check Settings');
+      showApiError(msg);
     }
     setStatus('on', 'Listening');
   } catch(e) {
     removeThinking();
     dbg('Analysis fetch error: ' + e.message);
-    setStatus('on', 'Listening');
+    setStatus('error', 'AI error Ã¢â‚¬â€ check Settings');
+    showApiError(e.message);
   } finally {
     analysisRunning = false;
   }
@@ -1784,6 +1819,52 @@ function addCards(items) {
     }
   });
   document.getElementById('cc').textContent = cardCount + ' card' + (cardCount!==1?'s':'');
+}
+
+function friendlyApiError(raw) {
+  const s = (typeof raw === 'string' ? raw : JSON.stringify(raw)).toLowerCase();
+  if (s.includes('no anthropic api key') || s.includes('no openai api key') || s.includes('add your')) {
+    return { title: 'API key not configured', body: 'Open Settings and add your Anthropic or OpenAI key to enable insight cards.', action: 'settings' };
+  }
+  if (s.includes('authentication') || s.includes('invalid api key') || s.includes('incorrect api key') || s.includes('invalid x-api-key')) {
+    return { title: 'API key rejected', body: 'Your key was not accepted. Open Settings, re-enter your key, and make sure it matches the selected provider (Anthropic vs OpenAI).', action: 'settings' };
+  }
+  if (s.includes('quota') || s.includes('billing') || s.includes('insufficient_quota') || s.includes('credit') || s.includes('balance')) {
+    return { title: 'API account out of credits', body: 'Your API account has no remaining credits. Top up at console.anthropic.com or platform.openai.com, then try again.', action: null };
+  }
+  if (s.includes('rate limit') || s.includes('rate_limit') || s.includes('too many requests')) {
+    return { title: 'Rate limited', body: 'Too many requests were sent. Analysis will retry automatically Ã¢â‚¬â€ no action needed.', action: null };
+  }
+  if (s.includes('model') && (s.includes('not found') || s.includes('does not exist') || s.includes('invalid model'))) {
+    return { title: 'Model not available', body: 'The selected AI model is unavailable. Open Settings and choose a different model.', action: 'settings' };
+  }
+  if (s.includes('network') || s.includes('econnrefused') || s.includes('timeout') || s.includes('failed to fetch')) {
+    return { title: 'Connection error', body: 'Could not reach the AI service. Check your internet connection and try again.', action: null };
+  }
+  return { title: 'AI error', body: (typeof raw === 'string' ? raw : JSON.stringify(raw)).substring(0, 200), action: 'settings' };
+}
+
+function showApiError(rawMsg) {
+  const { title, body, action } = friendlyApiError(rawMsg);
+  const area = document.getElementById('cards');
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.style.cssText = 'border-color:rgba(239,68,68,0.4)';
+  el.innerHTML = `<span class="tag" style="background:rgba(239,68,68,0.15);color:#ef4444">error</span><div class="card-title" style="color:#ef4444">${esc(title)}</div><div class="card-body">${esc(body)}${action === 'settings' ? '<br><button id="_errBtn" style="margin-top:8px;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer">Open Settings Ã¢â€ â€™</button>' : ''}</div>`;
+  if (action === 'settings') el.querySelector('#_errBtn').onclick = openSettings;
+  area.querySelector('.ph-cards')?.remove();
+  area.insertBefore(el, area.firstChild);
+}
+
+function showSetupCard() {
+  const area = document.getElementById('cards');
+  area.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.style.cssText = 'border-color:rgba(99,102,241,0.4)';
+  el.innerHTML = `<span class="tag" style="background:rgba(99,102,241,0.15);color:#6366f1">setup needed</span><div class="card-title">Add an API key to get started</div><div class="card-body">Meetintel needs an Anthropic or OpenAI key to generate insight cards. Your key is stored on this server only Ã¢â‚¬â€ never shared.<br><button id="_setupBtn" style="margin-top:8px;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.1);color:#6366f1;cursor:pointer">Open Settings Ã¢â€ â€™</button></div>`;
+  el.querySelector('#_setupBtn').onclick = openSettings;
+  area.appendChild(el);
 }
 
 function showThinking() {
@@ -1820,7 +1901,7 @@ function fmtBody(s) {
 }
 function escRaw(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// ── document RAG ─────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ document RAG Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let _docsOpen = true;
 let _docUploading = false;
 
@@ -1835,7 +1916,7 @@ function renderDocuments(docs) {
   document.getElementById('docsCount').textContent = docs.length + ' file' + (docs.length !== 1 ? 's' : '');
   const body = document.getElementById('docsBody');
   if (!docs.length) {
-    body.innerHTML = '<div class="docs-empty">No documents — add .pdf, .docx, .txt, or .md to enhance card context</div>';
+    body.innerHTML = '<div class="docs-empty">No documents Ã¢â‚¬â€ add .pdf, .docx, .txt, or .md to enhance card context</div>';
     return;
   }
   const icons = { pdf: 'ti-file-type-pdf', docx: 'ti-file-type-doc', txt: 'ti-file-text', md: 'ti-markdown' };
@@ -1846,7 +1927,7 @@ function renderDocuments(docs) {
       <i class="ti ${icon} doc-icon" aria-hidden="true"></i>
       <div class="doc-info">
         <div class="doc-name">${esc(d.name)}</div>
-        <div class="doc-meta">${d.chunk_count} chunks · ${kb} KB</div>
+        <div class="doc-meta">${d.chunk_count} chunks Ã‚Â· ${kb} KB</div>
       </div>
       <button class="doc-del" onclick="deleteDoc(${d.id})" title="Remove"><i class="ti ti-x" aria-hidden="true"></i></button>
     </div>`;
@@ -1891,7 +1972,7 @@ function toggleDocs() {
     : 'ti ti-chevron-right';
 }
 
-// ── Microsoft To Do integration ──────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Microsoft To Do integration Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let _msftPollTimer = null;
 let _msftLists = [];
 
@@ -1905,7 +1986,7 @@ async function toggleMsftPanel() {
 async function renderMsftPanel() {
   const panel = document.getElementById('msftPanel');
   panel.className = 'msft-panel';
-  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Checking…</div>';
+  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">CheckingÃ¢â‚¬Â¦</div>';
   try {
     const st = await (await fetch('/msft/status')).json();
     if (!st.hasClientId) { renderMsftSetup(panel); return; }
@@ -1918,17 +1999,17 @@ function renderMsftSetup(panel) {
   panel.innerHTML = `
     <div style="font-weight:600;margin-bottom:6px;"><i class="ti ti-brand-windows"></i> Connect Microsoft To Do</div>
     <div style="color:var(--text2);margin-bottom:6px;font-size:11px;">
-      <strong>No Azure subscription needed</strong> — just a free 2-min app registration with your regular Microsoft account:<br>
-      1. Go to <a href="#" onclick="openExternal('https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade')" style="color:var(--blue);">portal.azure.com → App registrations → New</a><br>
+      <strong>No Azure subscription needed</strong> Ã¢â‚¬â€ just a free 2-min app registration with your regular Microsoft account:<br>
+      1. Go to <a href="#" onclick="openExternal('https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade')" style="color:var(--blue);">portal.azure.com Ã¢â€ â€™ App registrations Ã¢â€ â€™ New</a><br>
       2. Name it anything, choose <em>Personal Microsoft accounts only</em><br>
-      3. Add platform: <em>Mobile and desktop</em> → redirect <code>https://login.microsoftonline.com/common/oauth2/nativeclient</code><br>
-      4. API permissions → <em>Tasks.ReadWrite</em> (delegated)<br>
+      3. Add platform: <em>Mobile and desktop</em> Ã¢â€ â€™ redirect <code>https://login.microsoftonline.com/common/oauth2/nativeclient</code><br>
+      4. API permissions Ã¢â€ â€™ <em>Tasks.ReadWrite</em> (delegated)<br>
       5. Copy the <em>Application (client) ID</em> and paste below
     </div>
     <input id="msftClientInput" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width:100%;font-size:12px;padding:5px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--surface);color:var(--text);margin-bottom:6px;font-family:Consolas,monospace;" />
     <div style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="msft-btn" onclick="saveMsftClientId()">Save & sign in</button>
-      <button class="msft-btn secondary" onclick="exportTodosIcs()" title="No sign-in required — imports directly into Outlook"><i class="ti ti-calendar-down" aria-hidden="true"></i> Export .ics for Outlook</button>
+      <button class="msft-btn secondary" onclick="exportTodosIcs()" title="No sign-in required Ã¢â‚¬â€ imports directly into Outlook"><i class="ti ti-calendar-down" aria-hidden="true"></i> Export .ics for Outlook</button>
       <button class="msft-btn secondary" onclick="document.getElementById('msftPanel').style.display='none'">Cancel</button>
     </div>`;
 }
@@ -1946,7 +2027,7 @@ async function saveMsftClientId() {
 }
 
 async function renderMsftAuth(panel) {
-  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Starting sign-in…</div>';
+  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Starting sign-inÃ¢â‚¬Â¦</div>';
   try {
     const r = await (await fetch('/msft/start-auth', { method:'POST' })).json();
     if (r.error) { panel.innerHTML = '<div style="color:var(--danger-text);">' + r.error + '</div>'; return; }
@@ -1954,7 +2035,7 @@ async function renderMsftAuth(panel) {
       <div style="font-weight:600;margin-bottom:4px;">Sign in to Microsoft</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">1. Go to <strong>microsoft.com/devicelogin</strong><br>2. Enter this code:</div>
       <div class="msft-code">${r.user_code}</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px;" id="msftAuthStatus">Waiting for sign-in…</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;" id="msftAuthStatus">Waiting for sign-inÃ¢â‚¬Â¦</div>
       <div style="display:flex;gap:6px;margin-top:8px;">
         <button class="msft-btn" onclick="openExternal('https://microsoft.com/devicelogin')" style="font-size:10px;">Open browser</button>
         <button class="msft-btn secondary" onclick="stopMsftPoll();document.getElementById('msftPanel').style.display='none'">Cancel</button>
@@ -1986,13 +2067,13 @@ function stopMsftPoll() {
 }
 
 async function renderMsftSend(panel) {
-  document.getElementById('msftBtnLabel').textContent = 'Connected ✓';
+  document.getElementById('msftBtnLabel').textContent = 'Connected Ã¢Å“â€œ';
   const openTodos = todos.filter(t => !t.done);
   if (!openTodos.length) {
     panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">No open to-do items to send.</div>';
     return;
   }
-  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Loading lists…</div>';
+  panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Loading listsÃ¢â‚¬Â¦</div>';
   try {
     const r = await (await fetch('/msft/lists')).json();
     _msftLists = r.lists || [];
@@ -2013,10 +2094,10 @@ async function sendToMsft() {
   if (!listId) return;
   const tasks = todos.filter(t => !t.done).map(t => t.text);
   const btn = document.querySelector('#msftPanel .msft-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'SendingÃ¢â‚¬Â¦'; }
   try {
     const r = await (await fetch('/msft/create-tasks', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ listId, tasks }) })).json();
-    document.getElementById('msftPanel').innerHTML = `<div class="msft-panel" style="color:var(--green);">✓ Sent ${r.created} task${r.created!==1?'s':''} to Microsoft To Do.</div>`;
+    document.getElementById('msftPanel').innerHTML = `<div class="msft-panel" style="color:var(--green);">Ã¢Å“â€œ Sent ${r.created} task${r.created!==1?'s':''} to Microsoft To Do.</div>`;
     setTimeout(() => { document.getElementById('msftPanel').style.display = 'none'; }, 2500);
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
@@ -2040,7 +2121,7 @@ function exportTodosIcs() {
   const open = todos.filter(t => !t.done);
   if (!open.length) { alert('No open to-do items.'); return; }
   const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-  const title = document.getElementById('meetingTitle')?.value.trim() || 'Meeto Tasks';
+  const title = document.getElementById('meetingTitle')?.value.trim() || 'Meetintel Tasks';
   const vtodos = open.map((t, i) => [
     'BEGIN:VTODO',
     'UID:meeteor-' + (Date.now() + i) + '@meeteor',
@@ -2050,7 +2131,7 @@ function exportTodosIcs() {
     'PRIORITY:5',
     'END:VTODO'
   ].join('\r\n')).join('\r\n');
-  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Meeto//Tasks//1.0//EN\r\nCALSCALE:GREGORIAN\r\n' + vtodos + '\r\nEND:VCALENDAR\r\n';
+  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Meetintel//Tasks//1.0//EN\r\nCALSCALE:GREGORIAN\r\n' + vtodos + '\r\nEND:VCALENDAR\r\n';
   const blob = new Blob([ics], { type: 'text/calendar' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2068,7 +2149,7 @@ async function disconnectMsft() {
   await renderMsftPanel();
 }
 
-// ── Resizable transcript pane ────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Resizable transcript pane Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 (function() {
   const handle = document.getElementById('resizeHandle');
   const left = handle.previousElementSibling;
@@ -2097,7 +2178,7 @@ async function doLogout() {
   window.location.reload();
 }
 
-// ── Settings ─────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ Settings Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let _userSettings = { provider: 'openai', model: 'gpt-4o', hasAnthropicKey: false, hasOpenaiKey: false, tier: 'trial', trialSecondsLeft: null };
 
 const CLAUDE_MODELS = [
@@ -2128,11 +2209,11 @@ function updateTrialBadge() {
   if (left === null || left === undefined) { badge.style.display = 'none'; return; }
   badge.style.display = '';
   if (left <= 0) {
-    badge.textContent = '⏱ Trial expired';
+    badge.textContent = 'Ã¢ÂÂ± Trial expired';
     badge.classList.add('expired');
   } else {
     const mins = Math.ceil(left / 60);
-    badge.textContent = `⏱ ${mins} min trial left`;
+    badge.textContent = `Ã¢ÂÂ± ${mins} min trial left`;
     badge.classList.remove('expired');
   }
 }
@@ -2155,8 +2236,8 @@ function renderSettings() {
   providerSel.value = s.provider || 'openai';
   updateModelOptions();
   modelSel.value = s.model || 'gpt-4o';
-  document.getElementById('settingsAnthropicStatus').textContent = s.hasAnthropicKey ? '✓ Key saved' : '';
-  document.getElementById('settingsOpenaiStatus').textContent = s.hasOpenaiKey ? '✓ Key saved' : '';
+  document.getElementById('settingsAnthropicStatus').textContent = s.hasAnthropicKey ? 'Ã¢Å“â€œ Key saved' : '';
+  document.getElementById('settingsOpenaiStatus').textContent = s.hasOpenaiKey ? 'Ã¢Å“â€œ Key saved' : '';
   document.getElementById('settingsAnthropicKey').value = '';
   document.getElementById('settingsOpenaiKey').value = '';
 }
@@ -2171,7 +2252,7 @@ function updateModelOptions() {
 
 async function saveSettings() {
   const btn = document.getElementById('saveSettingsBtn');
-  btn.disabled = true; btn.textContent = 'Saving…';
+  btn.disabled = true; btn.textContent = 'SavingÃ¢â‚¬Â¦';
   const body = {
     provider: document.getElementById('settingsProvider').value,
     model: document.getElementById('settingsModel').value
@@ -2198,7 +2279,7 @@ async function activateLicense() {
   const key = document.getElementById('licenseKeyInput').value.trim();
   if (!key) return;
   const btn = document.getElementById('activateLicenseBtn');
-  btn.disabled = true; btn.textContent = 'Activating…';
+  btn.disabled = true; btn.textContent = 'ActivatingÃ¢â‚¬Â¦';
   const r = await fetch('/license/activate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ key }) }).then(r => r.json());
   if (r.ok) {
     await loadUserSettings();
@@ -2216,7 +2297,7 @@ init();
 <!-- Settings modal -->
 <div class="overlay" id="settingsOverlay" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="overlay-card">
-    <button class="overlay-close" onclick="closeSettings()">×</button>
+    <button class="overlay-close" onclick="closeSettings()">Ãƒâ€”</button>
     <h3>Settings</h3>
     <p class="sub">Configure your AI provider and API keys. Keys are stored server-side only.</p>
 
@@ -2248,8 +2329,8 @@ init();
 <!-- Paywall modal -->
 <div class="overlay" id="paywallOverlay" style="display:none" onclick="if(event.target===this)closePaywall()">
   <div class="overlay-card">
-    <button class="overlay-close" onclick="closePaywall()">×</button>
-    <div class="paywall-icon">☄️</div>
+    <button class="overlay-close" onclick="closePaywall()">Ãƒâ€”</button>
+    <div class="paywall-icon">Ã¢Ëœâ€žÃ¯Â¸Â</div>
     <h3>Your free trial has ended</h3>
     <p class="sub">Upgrade to keep all your notes, unlimited meetings, and full AI analysis.</p>
     <ul class="paywall-features">
@@ -2259,10 +2340,10 @@ init();
       <li>Meeting history &amp; export</li>
       <li>Microsoft To Do integration</li>
     </ul>
-    <button class="btn-upgrade" onclick="window.open('/landing#pricing','_blank')">See pricing →</button>
+    <button class="btn-upgrade" onclick="window.open('/landing#pricing','_blank')">See pricing Ã¢â€ â€™</button>
     <p class="sub" style="text-align:center;margin-top:12px;margin-bottom:0">Already have a license key?</p>
     <div class="license-input-row">
-      <input type="text" id="licenseKeyInput" placeholder="MEETO-..." />
+      <input type="text" id="licenseKeyInput" placeholder="MEETINTEL-..." />
       <button id="activateLicenseBtn" onclick="activateLicense()">Activate</button>
     </div>
   </div>
