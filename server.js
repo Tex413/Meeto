@@ -387,6 +387,33 @@ function proxyOpenAI(anthropicBody, openaiKey, model) {
   });
 }
 
+// Run one LLM completion through the user's configured provider/key.
+// Returns assistant text, or null on any failure (caller falls back gracefully).
+// Forces a cheap model for cost control unless the user already runs a cheap one.
+async function llmComplete(userId, { system, messages, max_tokens = 512 }) {
+  const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
+  if (!s) return null;
+  const provider = s.ai_provider || 'openai';
+  const body = JSON.stringify({ system, messages, max_tokens });
+  const CHEAP_ANTHROPIC = 'claude-haiku-4-5-20251001', CHEAP_OPENAI = 'gpt-4o-mini';
+  try {
+    const useAnthropic = provider === 'anthropic' || (s.openai_key || '').startsWith('sk-ant-');
+    if (useAnthropic) {
+      const key = provider === 'anthropic' ? s.anthropic_key : s.openai_key;
+      if (!key) return null;
+      const parsed = JSON.parse(body); parsed.model = CHEAP_ANTHROPIC;
+      const r = await proxyAnthropic(JSON.stringify(parsed), key);
+      if (r.status !== 200) return null;
+      return JSON.parse(r.body)?.content?.[0]?.text || null;
+    } else {
+      if (!s.openai_key) return null;
+      const r = await proxyOpenAI(body, s.openai_key, CHEAP_OPENAI);
+      if (r.status !== 200) return null;
+      return JSON.parse(r.body)?.content?.[0]?.text || null;
+    }
+  } catch { return null; }
+}
+
 // ── Local AI models (Transformers.js, fully offline after first download) ──
 // Models are cached in the persistent ./data volume so they download once.
 let _tf = null;
@@ -1067,6 +1094,30 @@ const server = http.createServer(async (req, res) => {
       log('Transcription error:', e.message);
       return json(res, 500, { error: 'transcription_failed', message: e.message });
     }
+  }
+
+  // LLM refine pass: clean up ASR errors using the context as a glossary.
+  // Layered on top of the local vocabulary correction; uses a cheap model.
+  if (req.method === 'POST' && url === '/transcribe/refine') {
+    const ts = trialStatus(user);
+    if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
+    ensureUserSettings(userId);
+    const { text = '', context = '' } = JSON.parse(await readBody(req));
+    const wc = text.trim().split(/\s+/).filter(Boolean).length;
+    if (wc < 4) return json(res, 200, { text });               // not worth a call
+    const system = 'You fix speech-to-text transcription errors. Return ONLY the corrected transcript text, nothing else. '
+      + 'Use the provided context as a glossary to fix misheard names, jargon, and acronyms. Preserve the speaker\'s exact '
+      + 'wording, meaning, fillers and punctuation — do NOT summarize, rephrase, translate, answer, or add anything. '
+      + 'If unsure about a word, leave it unchanged.';
+    const userMsg = (context ? 'Context/glossary:\n' + context.slice(0, 4000) + '\n\n' : '')
+      + 'Transcript to correct:\n' + text;
+    const corrected = await llmComplete(userId, {
+      system, messages: [{ role: 'user', content: userMsg }],
+      max_tokens: Math.min(1024, Math.ceil(text.length / 2) + 64)
+    });
+    const out = (corrected && corrected.trim()) ? corrected.trim() : text;
+    if (out !== text) log('Refine: ' + JSON.stringify(text) + ' → ' + JSON.stringify(out));
+    return json(res, 200, { text: out });
   }
 
   // ── documents ────────────────────────────────────────────────

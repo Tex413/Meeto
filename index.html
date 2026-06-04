@@ -757,6 +757,10 @@ html, body {
     <div class="ctx-area">
         <label>Context — paste notes, study guide excerpts, client specifics</label>
         <textarea id="ctx" placeholder="e.g. NOG (NYSE: NOG) uses Palantir Foundry for well master, budget, analytics. New ERP must integrate via REST API. Key contacts: Chad Schneider (Asst Controller), Gus Bell. Pat Schooler is Integration Architect — owns ERP-Foundry design and delivery. NOG has 12,000+ wells, 100+ operators, hundreds of thousands of monthly JIB transactions..."></textarea>
+        <label class="ai-refine-opt" style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--text2);cursor:pointer;">
+          <input type="checkbox" id="aiRefineToggle" checked style="width:auto;margin:0;cursor:pointer;" />
+          AI transcript cleanup <span style="color:var(--text3);">(uses your API key)</span>
+        </label>
       </div>
       <div class="docs-panel" id="docsPanel">
         <div class="docs-hdr" onclick="toggleDocs()">
@@ -1510,6 +1514,7 @@ function stopListen() {
   _chunkQueue = []; _sampleBuf = [];
   clearInterval(tickInterval);
   setStatus('', 'Stopped');
+  refineTurns(true);   // flush: refine any remaining turns, including the last
   dbg('Stopped');
   const b = document.getElementById('listenBtn');
   b.innerHTML = '<i class="ti ti-microphone" aria-hidden="true"></i> Start listening';
@@ -1658,6 +1663,7 @@ function wordCount(t) { return t.trim().split(/\s+/).filter(w=>w).length; }
 let turnChunks = [];
 let turnTimestamps = [];
 let turnSpeakers = [];
+let turnRefined = [];   // per-turn: has the LLM refine pass run on this turn yet
 let _lastTurnTime = 0;
 let _lastTurnSpeaker = null;
 
@@ -1668,13 +1674,51 @@ function pushTurn(text, isMe) {
   const recentEnough = (now - _lastTurnTime) < 8000;
   if (turnChunks.length > 0 && sameSpeaker && recentEnough) {
     turnChunks[turnChunks.length - 1] += ' ' + text.trim();
+    turnRefined[turnChunks.length - 1] = false; // content changed -> re-refine
   } else {
     turnChunks.push(text.trim());
     turnSpeakers.push(isMe === true);
     turnTimestamps.push(new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}));
+    turnRefined.push(false);
     _lastTurnSpeaker = isMe;
   }
   _lastTurnTime = now;
+}
+
+// LLM refine pass over finalized turns. Layered on top of the local correction.
+// Runs on the analysis cadence; only touches settled turns; gated by the toggle.
+let _refining = false;
+async function refineTurns(includeLast) {
+  if (_refining) return;
+  if (!document.getElementById('aiRefineToggle')?.checked) return;
+  const ctx = (document.getElementById('ctx')?.value || '');
+  const upTo = turnChunks.length - (includeLast ? 0 : 1); // last turn may still grow
+  const jobs = [];
+  for (let i = 0; i < upTo; i++) {
+    if (turnRefined[i]) continue;
+    if (wordCount(turnChunks[i] || '') < 4) { turnRefined[i] = true; continue; }
+    jobs.push(i);
+  }
+  if (!jobs.length) return;
+  _refining = true;
+  try {
+    for (const i of jobs) {
+      const original = turnChunks[i];
+      try {
+        const resp = await fetch('/transcribe/refine', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: original, context: ctx })
+        });
+        if (resp.ok) {
+          const { text } = await resp.json();
+          // apply only if this turn hasn't changed/reset during the await
+          if (turnChunks[i] === original && text && text.trim()) turnChunks[i] = text.trim();
+        }
+      } catch(e) { /* leave turn as-is on failure */ }
+      turnRefined[i] = true;
+    }
+    renderTranscript();
+  } finally { _refining = false; }
 }
 
 function renderTranscript(interimText) {
@@ -1723,6 +1767,7 @@ async function testAI() {
 }
 
 async function maybeAnalyze() {
+  refineTurns();            // refine settled turns on the analysis cadence (fire-and-forget)
   if (analysisRunning) return;
   const newWords = transcript_final.slice(lastSent.length).trim();
   const nw = wordCount(newWords);
@@ -1934,7 +1979,7 @@ function showThinking() {
 function removeThinking() { document.getElementById('thinking')?.remove(); }
 
 function clearAll() {
-  transcript_final = ''; interim = ''; lastSent = ''; cardCount = 0; turnChunks = []; turnTimestamps = []; turnSpeakers = []; todos = []; renderTodos();
+  transcript_final = ''; interim = ''; lastSent = ''; cardCount = 0; turnChunks = []; turnTimestamps = []; turnSpeakers = []; turnRefined = []; todos = []; renderTodos();
   document.getElementById('transcript').innerHTML = '<p class="ph">Cleared. Ready to listen again.</p>';
   document.getElementById('cards').innerHTML = '<div class="ph-cards"><i class="ti ti-brain" aria-hidden="true"></i>Insight cards will appear here.</div>';
   document.getElementById('wc').textContent = '0 words';
