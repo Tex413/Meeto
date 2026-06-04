@@ -940,13 +940,15 @@ async function endMeeting() {
 
 // save cards to db when they're generated
 async function saveCardsToDb(cards, transcriptSnapshot) {
-  if (!currentMeetingId) return;
+  if (!currentMeetingId) return null;
   try {
-    await fetch('/card/save', {
+    const r = await fetch('/card/save', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ meetingId: currentMeetingId, cards, transcriptSnapshot })
     });
-  } catch(e) {}
+    const d = await r.json();
+    return d.ids || null;   // db ids, in the same order as `cards`
+  } catch(e) { return null; }
 }
 
 // ── history panel ─────────────────────────────────────────────
@@ -1025,7 +1027,7 @@ async function loadMeetingDetail(id, title) {
         const t = c.captured_at ? new Date(c.captured_at).toLocaleTimeString() : '';
         el.innerHTML = `
           <span class="hist-card-tag ${tagClass}">${esc(c.tag || 'general')}</span>
-          <div class="hist-card-title">${esc(c.title || '')}</div>
+          <div class="hist-card-title">${c.pinned ? '<i class="ti ti-pin" aria-hidden="true" style="color:#3b82f6;"></i> ' : ''}${esc(c.title || '')}</div>
           <div class="hist-card-body">${esc(c.body || '')}</div>
           ${t ? '<div class="hist-card-time">' + t + '</div>' : ''}`;
         cardsEl.appendChild(el);
@@ -1899,15 +1901,16 @@ If nothing noteworthy, return [].`;
 
 function addCards(items) {
   const snapshot = (transcript_final || '').trim().split(' ').slice(-50).join(' ');
-  saveCardsToDb(items, snapshot);
   const area = document.getElementById('cards');
   area.querySelector('.ph-cards')?.remove();
+  const created = [];
   items.forEach(c => {
     const el = document.createElement('div');
     el.className = 'card tag-' + (c.tag || 'general');
     el.innerHTML = `<div class="card-actions"><button class="card-btn pin-btn" title="Pin" onclick="pinCard(this)"><i class="ti ti-pin" aria-hidden="true"></i></button><button class="card-btn del-btn" title="Delete" onclick="deleteCard(this)"><i class="ti ti-trash" aria-hidden="true"></i></button></div><span class="tag tag-${esc(c.tag||'general')}">${esc((c.tag||'general').replace('-',' '))}</span><div class="card-title">${esc(c.title||'')}</div><div class="card-body">${fmtBody(c.body||'')}</div>`;
     // newest unpinned card goes to the top of the unpinned group (below any pins)
     area.insertBefore(el, area.querySelector('.card:not(.pinned)'));
+    created.push(el);
     cardCount++;
     // Auto-add action items to the todo list
     if (c.tag === 'action-item' && c.title) {
@@ -1918,6 +1921,20 @@ function addCards(items) {
     }
   });
   document.getElementById('cc').textContent = cardCount + ' card' + (cardCount!==1?'s':'');
+  // persist, then tag each card element with its db id so pin/delete can save state
+  saveCardsToDb(items, snapshot).then(ids => {
+    if (ids) created.forEach((el, i) => { if (ids[i] != null) el.dataset.cardId = ids[i]; });
+  });
+}
+
+// persist a card's pinned/deleted state to the db (no-op if it has no id yet)
+function persistCard(el, patch) {
+  const id = el && el.dataset && el.dataset.cardId;
+  if (!id) return;
+  fetch('/card/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ id: Number(id) }, patch))
+  }).catch(() => {});
 }
 
 function pinCard(btn) {
@@ -1932,10 +1949,12 @@ function pinCard(btn) {
     const lastPin = pins[pins.length - 1];
     area.insertBefore(el, lastPin ? lastPin.nextSibling : area.firstChild); // drop just below the pins
   }
+  persistCard(el, { pinned });
 }
 
 function deleteCard(btn) {
   const el = btn.closest('.card'); if (!el) return;
+  persistCard(el, { deleted: true });
   el.remove();
   cardCount = Math.max(0, cardCount - 1);
   document.getElementById('cc').textContent = cardCount + ' card' + (cardCount!==1?'s':'');

@@ -123,6 +123,8 @@ async function initDb() {
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE documents ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE meetings ADD COLUMN todos TEXT');
+  migrate('ALTER TABLE cards ADD COLUMN pinned INTEGER DEFAULT 0');
+  migrate('ALTER TABLE cards ADD COLUMN deleted INTEGER DEFAULT 0');
   migrate('ALTER TABLE users ADD COLUMN reset_token TEXT');
   migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
 
@@ -968,9 +970,27 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/card/save') {
     const body = JSON.parse(await readBody(req));
+    const ids = [];
     const stmt = db.prepare(`INSERT INTO cards (meeting_id, captured_at, tag, title, body, transcript_snapshot) VALUES (?,?,?,?,?,?)`);
-    body.cards.forEach(c => stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']));
-    stmt.free(); saveDb(); return json(res, 200, { ok: true });
+    body.cards.forEach(c => {
+      stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']);
+      ids.push(db.exec('SELECT last_insert_rowid()')[0].values[0][0]); // map each card to its db id
+    });
+    stmt.free(); saveDb(); return json(res, 200, { ok: true, ids });
+  }
+
+  // Persist a card's pinned/deleted state (scoped to the user's own meetings).
+  if (req.method === 'POST' && url === '/card/update') {
+    const { id, pinned, deleted } = JSON.parse(await readBody(req));
+    const cid = parseInt(id);
+    if (!cid) return json(res, 400, { error: 'bad id' });
+    const own = dbGet(`SELECT c.id FROM cards c JOIN meetings m ON m.id = c.meeting_id WHERE c.id = ${cid} AND m.user_id = ${userId}`);
+    if (!own) return json(res, 404, { error: 'not found' });
+    const sets = [];
+    if (pinned !== undefined) sets.push(`pinned = ${pinned ? 1 : 0}`);
+    if (deleted !== undefined) sets.push(`deleted = ${deleted ? 1 : 0}`);
+    if (sets.length) { db.run(`UPDATE cards SET ${sets.join(', ')} WHERE id = ${cid}`); saveDb(); }
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url === '/meetings') {
@@ -982,7 +1002,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
     const m = db.exec(`SELECT * FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    const c = db.exec(`SELECT * FROM cards WHERE meeting_id=${id} ORDER BY captured_at ASC`);
+    const c = db.exec(`SELECT * FROM cards WHERE meeting_id=${id} AND COALESCE(deleted,0)=0 ORDER BY COALESCE(pinned,0) DESC, captured_at ASC`);
     if (!m.length || !m[0].values.length) return json(res, 404, { error: 'Not found' });
     const meeting = {}; m[0].columns.forEach((col, i) => meeting[col] = m[0].values[0][i]);
     const cardCols = c.length ? c[0].columns : [];
