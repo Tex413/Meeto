@@ -14,6 +14,10 @@ const STARTED = new Date().toISOString();
 const PORT = parseInt(process.env.PORT || '7432');
 const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const IS_HTTPS = PUBLIC_URL.startsWith('https://');
+// Desktop (Electron) mode: single local user, no login/registration. Set by main.js.
+// When off (hosted/web demo), all the multi-user/auth behavior is unchanged.
+const DESKTOP_MODE = process.env.DESKTOP_MODE === '1';
+let LOCAL_USER_ID = 1; // resolved during initDb when DESKTOP_MODE is on
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
@@ -135,6 +139,19 @@ async function initDb() {
   migrate(`UPDATE user_settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_provider = 'anthropic' AND (ai_model IS NULL OR ai_model LIKE 'gpt%' OR ai_model LIKE 'o1%' OR ai_model LIKE 'o3%')`);
   migrate(`UPDATE user_settings SET openai_key = NULL WHERE openai_key LIKE 'sk-ant-%'`);
 
+  // Desktop mode: ensure a single local user exists and is fully unlocked.
+  // (Phase 2 will gate this behind an Ed25519 license; for now it's open so the
+  // app is usable while the desktop build comes together.)
+  if (DESKTOP_MODE) {
+    let u = dbGet(`SELECT id FROM users WHERE email = 'local@desktop'`);
+    if (!u) {
+      db.run(`INSERT INTO users (email, pwd_hash, created_at, tier) VALUES ('local@desktop', '-', '${new Date().toISOString()}', 'paid')`);
+      u = dbGet(`SELECT id FROM users WHERE email = 'local@desktop'`);
+    }
+    LOCAL_USER_ID = u.id;
+    log('Desktop mode: single local user id', LOCAL_USER_ID);
+  }
+
   saveDb();
   log('Database ready:', DB_FILE);
 }
@@ -168,6 +185,7 @@ function makeToken(userId) {
   return t;
 }
 function checkToken(req) {
+  if (DESKTOP_MODE) return LOCAL_USER_ID;  // single local user — no auth in the desktop app
   const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
   const token = m ? m[1] : (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return null;

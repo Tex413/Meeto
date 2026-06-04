@@ -6,10 +6,15 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "electron": "electron main.js",
+    "desktop": "electron main.js",
     "docker:build": "docker build -t meetintel .",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",

@@ -2,7 +2,19 @@ const { app, BrowserWindow, session } = require('electron');
 const { execSync } = require('child_process');
 const path = require('path');
 
-// Free port 7432 if another process is holding it (e.g. a stale node server.js)
+// Configure the embedded server for desktop mode BEFORE requiring it:
+//  - single local user, no login (DESKTOP_MODE)
+//  - data (SQLite, models, docs, logs) under the user's app-data dir so it
+//    persists across updates and never writes into the install directory.
+process.env.DESKTOP_MODE = '1';
+process.env.DATA_DIR = path.join(app.getPath('userData'), 'data');
+// Use a dedicated port so the desktop app never collides with the hosted
+// demo (which occupies 7432 via Docker on the dev machine).
+process.env.PORT = process.env.PORT || '7433';
+
+const PORT = parseInt(process.env.PORT);
+
+// Free the port if a stale process is holding it (e.g. a leftover node server.js)
 function freePort(port) {
   try {
     const out = execSync(`netstat -ano | findstr :${port}`).toString();
@@ -14,7 +26,7 @@ function freePort(port) {
     }
   } catch(e) {}
 }
-freePort(7432);
+freePort(PORT);
 
 const { serverReady } = require('./server');
 
@@ -42,8 +54,8 @@ app.whenReady().then(async () => {
 
   mainWindow.setMenuBarVisibility(false);
   await serverReady;
-  mainWindow.loadURL('http://localhost:7432');
-  mainWindow.webContents.openDevTools({ mode: 'detach' });
+  mainWindow.loadURL(`http://localhost:${PORT}`);
+  if (!app.isPackaged) mainWindow.webContents.openDevTools({ mode: 'detach' });
 });
 
 app.on('window-all-closed', () => {
