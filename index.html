@@ -1624,7 +1624,6 @@ async function processChunkQueue() {
           showNoOpenAIKeyBanner();
           return;
         }
-        }
         stopListen();
         showApiError(d.message || d.error || 'Transcription failed.');
         return;
