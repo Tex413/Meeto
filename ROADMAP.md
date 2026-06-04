@@ -54,11 +54,16 @@ Pivot from "hosted multi-user SaaS" to:
 - **KEY CUSTODY (owner):** `keys/license-private.pem` is gitignored — **back it up & keep secret**. A dev keypair was generated 2026-06-04; for production either keep it secure or regenerate (`crypto.generateKeyPairSync('ed25519')`) and replace `LICENSE_PUBLIC_KEY` in server.js. Lose the private key = can't mint new licenses; leak it = anyone can.
 - TODO later: surface license status/deactivate in Settings; enforce `updatesUntil` for update-gating (currently any valid sig = licensed).
 
-### Phase 3 — Installer
-- `electron-builder` → NSIS `.exe`.
-- **Native modules**: `@xenova/transformers` uses native `onnxruntime-node` → must `electron-rebuild` for Electron's ABI. `sql.js` is wasm (fine).
-- **Whisper model** (`Xenova/whisper-base.en`): bundle in installer (~big) OR download on first run (needs internet once). Lean: first-run download to userData, like today.
-- **Code-signing decision (owner):** buy cert (~$200–400/yr, no warning) OR ship unsigned (one-time SmartScreen "unknown publisher" prompt).
+### Phase 3 — Installer  ✅ DONE (build config committed; artifact in dist/, gitignored)
+- `electron-builder` (NSIS) config in package.json `build`. Produces `dist/Meetintel Setup 2.0.0.exe` (~130 MB).
+- **No native rebuild needed:** `onnxruntime-node` ships **N-API (napi-v3)** binaries which load under Electron as-is → `npmRebuild: false`. `asarUnpack` puts onnxruntime (.node/.dll), sql.js `.wasm`, sharp into `app.asar.unpacked` (verified present). App files (main.js/server.js/*.html) confirmed inside the asar.
+- **Whisper model**: NOT bundled — downloads on first run to userData (`DATA_DIR/models`). Needs internet on first transcription.
+- **Build command:** `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` (or `npm run dist:dir` for a fast unpacked build at `dist/win-unpacked/`).
+- **⚠️ Build gotcha (Windows):** electron-builder's `winCodeSign` toolchain contains macOS symlinks; extracting it needs **Developer Mode ON** (Settings → For developers) or an **elevated terminal**, else you get "Cannot create symbolic link". Workaround used this session: manually pre-extract into `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0` (the 2 macOS dylib errors are harmless). Enabling Developer Mode is the clean fix.
+- **STILL TODO (owner inputs):**
+  - 🎨 **App icon** — currently the default Electron icon. Add `build/icon.ico` and set `build.win.icon`.
+  - 🛡️ **Code-signing** — currently unsigned → SmartScreen "unknown publisher" warning. Buy a cert (~$200–400/yr) and set `CSC_LINK`/`CSC_KEY_PASSWORD`, or ship unsigned to start.
+  - ✅ **Smoke test on the machine:** run the installer (or `dist/win-unpacked/Meetintel.exe`) → activate screen → paste a minted license → confirm transcription works (first-run model download).
 
 ### Phase 4 — Site reframe + cap the demo
 - Rewrite `landing.html`: honest positioning (download the desktop app; **bring your own AI key** stated clearly), Features (real ones), **Roadmap** section for unbuilt/"cool" features, pricing ($69.99 one-time), "Try the demo" CTA → hosted app.
