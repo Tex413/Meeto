@@ -41,11 +41,11 @@ Pivot from "hosted multi-user SaaS" to:
 
 ## Desktop build — phases
 
-### Phase 1 — Electron wrap + single-user refactor  *(start here; needs nothing from owner)*
-- Electron main process boots the existing Node server on localhost; a `BrowserWindow` loads the UI. (Remnants exist: `preload.js`, `main.js`, `Meeto.vbs`.)
-- Add `DESKTOP_MODE`: bypass login/multi-user — treat all requests as a single local user (id 1), serve `index.html` directly (no login page). Keep `DESKTOP_MODE` off = current hosted behavior unchanged (so the demo keeps working from the same codebase).
-- Data dir → Electron `app.getPath('userData')`.
-- Goal of phase: app launches as a real desktop window and works locally.
+### Phase 1 — Electron wrap + single-user refactor  ✅ DONE (commit ddde729)
+- Electron main (`main.js`) boots the existing server on localhost:7433 and loads the UI in a `BrowserWindow`.
+- `server.js` `DESKTOP_MODE`: provisions one local user, `checkToken` short-circuits → no login/accounts. Hosted mode unchanged when off (verified both ways).
+- Data dir → Electron `app.getPath('userData')/data`. Port 7433 (avoids the 7432 demo).
+- **Launch:** `npm run electron`. (Transcription needs the Phase-3 native rebuild; UI + non-Whisper features work now.)
 
 ### Phase 2 — Licensing
 - Ed25519 sign/verify (replace HMAC). Owner holds private key; public key embedded in app.
