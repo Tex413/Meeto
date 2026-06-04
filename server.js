@@ -174,12 +174,21 @@ function checkToken(req) {
   s.expiry = Date.now() + SESSION_MS;
   return s.userId;
 }
-function setSessionCookie(res, token) {
-  const secure = IS_HTTPS ? '; Secure' : '';
+// Secure flag must follow the ACTUAL request protocol, not PUBLIC_URL.
+// Behind Cloudflare the request arrives with X-Forwarded-Proto: https; a
+// direct http://localhost hit has none. Marking the cookie Secure on a plain
+// HTTP request makes the browser silently drop it → login bounces forever.
+function reqIsHttps(req) {
+  const xfp = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (xfp) return xfp === 'https';
+  return !!(req.connection && req.connection.encrypted);
+}
+function setSessionCookie(res, token, req) {
+  const secure = reqIsHttps(req) ? '; Secure' : '';
   res.setHeader('Set-Cookie', `meetintel_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
 }
-function clearSessionCookie(res) {
-  const secure = IS_HTTPS ? '; Secure' : '';
+function clearSessionCookie(res, req) {
+  const secure = reqIsHttps(req) ? '; Secure' : '';
   res.setHeader('Set-Cookie', `meetintel_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
@@ -571,7 +580,7 @@ const server = http.createServer(async (req, res) => {
     saveDb();
     const user = dbGet(`SELECT id FROM users WHERE email = '${emailSafe}'`);
     const token = makeToken(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
     log('New user registered:', email);
     return json(res, 200, { ok: true });
   }
@@ -584,7 +593,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 401, { error: 'Incorrect email or password' });
     }
     const token = makeToken(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
     return json(res, 200, { ok: true });
   }
 
@@ -624,7 +633,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url === '/auth/logout') {
     const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
     if (m) sessions.delete(m[1]);
-    clearSessionCookie(res);
+    clearSessionCookie(res, req);
     return json(res, 200, { ok: true });
   }
 
