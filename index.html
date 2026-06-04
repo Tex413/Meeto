@@ -1208,15 +1208,12 @@ async function init() {
   dbg('Meetintel ready — provider=' + (_userSettings.provider || 'openai') +
       ' model=' + (_userSettings.model || 'gpt-4o') +
       ' anthropicKey=' + (_userSettings.hasAnthropicKey ? '✓' : '✗') +
-      ' openaiKey=' + (_userSettings.hasOpenaiKey ? '✓' : '✗') +
       ' tier=' + _userSettings.tier);
 
-  // if no OpenAI key, switch default STT to Web Speech (Whisper needs OpenAI)
-  if (!_userSettings.hasOpenaiKey) {
-    setSttMode('webspeech');
-    dbg('No OpenAI key — defaulting to Web Speech mode');
-  }
-  // show setup guidance if no API key at all
+  // Transcription runs locally (offline Whisper) — no key needed.
+  setSttMode('whisper');
+
+  // show setup guidance if no AI key for insight cards
   if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
     showSetupCard();
     setTimeout(openSettings, 600);
@@ -1617,18 +1614,12 @@ async function processChunkQueue() {
         body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE })
       });
       if (resp.status === 402) { stopListen(); openPaywall(); return; }
-      if (resp.status === 400) {
-        const d = await resp.json();
-        if (d.error === 'no_openai_key') {
-          stopListen();
-          showNoOpenAIKeyBanner();
-          return;
-        }
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
         stopListen();
-        showApiError(d.message || d.error || 'Transcription failed.');
+        showApiError(d.message || d.error || ('Transcription error (HTTP ' + resp.status + ')'));
         return;
       }
-      if (!resp.ok) { stopListen(); showApiError('Transcription error (HTTP ' + resp.status + '). Check your API key in Settings.'); return; }
       const { text } = await resp.json();
       await loadUserSettings(); // refresh trial counter
       dbg('Whisper result: ' + JSON.stringify(text));

@@ -10,6 +10,7 @@ const IS_HTTPS = PUBLIC_URL.startsWith('https://');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
+const MODELS_DIR = path.join(DATA_DIR, 'models');
 const LOG_FILE = path.join(DATA_DIR, 'meetintel.log');
 const ENV_FILE = path.join(DATA_DIR, '.env');
 
@@ -19,6 +20,7 @@ const TRIAL_DELETE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
+if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
 
 function log(...args) {
   const line = new Date().toISOString() + ' ' + args.join(' ');
@@ -369,6 +371,35 @@ function proxyOpenAI(anthropicBody, openaiKey, model) {
   });
 }
 
+// ── Local AI models (Transformers.js, fully offline after first download) ──
+// Models are cached in the persistent ./data volume so they download once.
+let _tf = null;
+async function getTransformers() {
+  if (_tf) return _tf;
+  _tf = await import('@xenova/transformers');
+  _tf.env.cacheDir = MODELS_DIR;
+  _tf.env.allowRemoteModels = true;
+  return _tf;
+}
+
+// ── Local Whisper STT (no API key, no per-use cost) ────────────
+let _whisper = null, _whisperLoading = false;
+async function getWhisper() {
+  if (_whisper) return _whisper;
+  if (_whisperLoading) {
+    await new Promise(resolve => { const t = setInterval(() => { if (!_whisperLoading) { clearInterval(t); resolve(); } }, 200); });
+    return _whisper;
+  }
+  _whisperLoading = true;
+  log('Loading Whisper model (first run downloads ~150 MB, then cached)…');
+  try {
+    const { pipeline } = await getTransformers();
+    _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en');
+    log('Whisper model ready.');
+  } finally { _whisperLoading = false; }
+  return _whisper;
+}
+
 // ── RAG / embeddings ───────────────────────────────────────────
 let _embedder = null, _embedderLoading = false;
 async function getEmbedder() {
@@ -380,7 +411,7 @@ async function getEmbedder() {
   _embedderLoading = true;
   log('Loading embedding model…');
   try {
-    const { pipeline } = await import('@xenova/transformers');
+    const { pipeline } = await getTransformers();
     _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { quantized: true });
     log('Embedding model ready.');
   } finally { _embedderLoading = false; }
@@ -917,23 +948,23 @@ const server = http.createServer(async (req, res) => {
     } catch(e) { log('proxy error:', e.message); return json(res, 500, { error: e.message }); }
   }
 
-  // ── Transcription (OpenAI Whisper API) ───────────────────────
+  // ── Transcription (local Whisper — offline, no API key, no per-use cost) ──
   if (req.method === 'POST' && url === '/transcribe') {
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
-    ensureUserSettings(userId);
-    const s = dbGet(`SELECT openai_key FROM user_settings WHERE user_id = ${userId}`);
-    if (!isRealOpenAIKey(s?.openai_key)) return json(res, 400, { error: 'no_openai_key', message: 'Whisper transcription needs an OpenAI key. Use Web Speech mode, or add an OpenAI key in Settings.' });
     const body = JSON.parse(await readBody(req));
     const { audio, sampleRate = 16000 } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
+      const whisper = await getWhisper();
       const buf = Buffer.from(audio, 'base64');
+      // slice() copies bytes into a new ArrayBuffer at offset 0 — avoids Float32Array alignment error
       const aligned = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       const audioData = new Float32Array(aligned);
       const audioSeconds = audioData.length / sampleRate;
-      const wav = float32ToWav(audioData, sampleRate);
-      const text = await openaiWhisper(wav, s.openai_key);
+      const result = await whisper(audioData, { sampling_rate: sampleRate });
+      const text = result.text || '';
+      log('Transcribe: ' + audioData.length + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
       // track trial usage
       if (user.tier === 'trial') {
         const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
@@ -944,7 +975,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { text });
     } catch(e) {
       log('Transcription error:', e.message);
-      return json(res, 200, { text: '' });
+      return json(res, 500, { error: 'transcription_failed', message: e.message });
     }
   }
 
@@ -1099,6 +1130,9 @@ const serverReady = new Promise(resolve => {
     server.listen(PORT, '0.0.0.0', () => {
       log(`Meetintel running at http://0.0.0.0:${PORT}`);
       resolve();
+      // Pre-warm the local Whisper model in the background so the first
+      // transcription isn't blocked on a cold download/load.
+      getWhisper().catch(e => log('Whisper pre-warm failed:', e.message));
     });
   });
 });
