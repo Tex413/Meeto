@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const https = require('https');
 
 const PORT = parseInt(process.env.PORT || '7432');
+const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const IS_HTTPS = APP_URL.startsWith('https://');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'meeto.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
@@ -155,10 +157,12 @@ function checkToken(req) {
   return s.userId;
 }
 function setSessionCookie(res, token) {
-  res.setHeader('Set-Cookie', `meeto_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}`);
+  const secure = IS_HTTPS ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `meeto_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
 }
 function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', 'meeto_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+  const secure = IS_HTTPS ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `meeto_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
 // ── trial helpers ──────────────────────────────────────────────
@@ -517,8 +521,8 @@ const server = http.createServer(async (req, res) => {
           unit_amount: isAnnual ? 2995 : 11900,
           ...(isAnnual ? { recurring: { interval: 'year' } } : {})
         }, quantity: 1 }],
-        success_url: `http://localhost:${PORT}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `http://localhost:${PORT}/checkout/cancel`
+        success_url: `${APP_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${APP_URL}/checkout/cancel`
       });
       return json(res, 200, { url: session.url });
     } catch(e) { return json(res, 500, { error: e.message }); }

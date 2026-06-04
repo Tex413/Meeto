@@ -4,10 +4,13 @@ services:
   meeto:
     build: .
     container_name: meeto
-    ports:
-      - "7432:7432"
+    # Port not exposed publicly — cloudflared proxies inbound traffic
+    expose:
+      - "7432"
     volumes:
       - ./data:/app/data
+    env_file:
+      - ./data/.env
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
@@ -19,3 +22,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      meeto:
+        condition: service_healthy
+    networks:
+      - default
+
+networks:
+  default:
+    name: meeto_net
