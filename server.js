@@ -554,7 +554,7 @@ const server = http.createServer(async (req, res) => {
   const skipLog = ['/auth/status', '/'].includes(url) || url.startsWith('/static');
   if (!skipLog) log(`${req.method} ${url}`);
   if (req.method === 'GET' && url === '/landing') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
@@ -612,7 +612,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url === '/reset') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'reset.html'), 'utf8'));
   }
 
@@ -679,7 +679,7 @@ const server = http.createServer(async (req, res) => {
     const html = fs.readFileSync(path.join(__dirname, 'success.html'), 'utf8')
       .replace('{{LICENSE_KEY}}', licenseKey)
       .replace('{{PLAN_TYPE}}', planType === 'annual' ? 'Annual' : 'Lifetime');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(html);
   }
 
@@ -703,7 +703,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── main app ─────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
-    const htmlHdr = { 'Content-Type': 'text/html', 'Cache-Control': 'no-store, must-revalidate' };
+    const htmlHdr = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' };
     if (!checkToken(req)) {
       res.writeHead(200, htmlHdr);
       return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8').replace(/__BUILD__/g, BUILD));
@@ -721,7 +721,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── admin ────────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/admin') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
   }
 
