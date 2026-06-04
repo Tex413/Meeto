@@ -149,7 +149,8 @@ async function initDb() {
       u = dbGet(`SELECT id FROM users WHERE email = 'local@desktop'`);
     }
     LOCAL_USER_ID = u.id;
-    log('Desktop mode: single local user id', LOCAL_USER_ID);
+    loadLicense();
+    log('Desktop mode: single local user id', LOCAL_USER_ID, '— licensed:', !!_license);
   }
 
   saveDb();
@@ -662,6 +663,35 @@ function verifyLicenseKey(key) {
   } catch(e) { return null; }
 }
 
+// ── Ed25519 desktop license (offline-verifiable; unforgeable) ──────
+// Keys are minted by the owner with the PRIVATE key (tools/sign-license.js);
+// the app verifies with this embedded PUBLIC key. Format:
+//   MEETINTEL2-<payloadB64url>.<ed25519SigB64url>
+const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAx2WzvIFxDl4HTErb8FJTlzLnP0cbB2KMd5K5S3N4IOM=
+-----END PUBLIC KEY-----`;
+const LICENSE_FILE = path.join(DATA_DIR, 'license.key');
+let _license = null; // cached verified payload (desktop only)
+
+function verifyLicenseV2(key) {
+  try {
+    const m = (key || '').trim().match(/^MEETINTEL2-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    const [, payloadB64, sigB64] = m;
+    const ok = crypto.verify(null, Buffer.from(payloadB64),
+      crypto.createPublicKey(LICENSE_PUBLIC_KEY), Buffer.from(sigB64, 'base64url'));
+    if (!ok) return null;
+    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch(e) { return null; }
+}
+function loadLicense() {
+  try { if (fs.existsSync(LICENSE_FILE)) _license = verifyLicenseV2(fs.readFileSync(LICENSE_FILE, 'utf8')); }
+  catch(e) { _license = null; }
+  return _license;
+}
+// Hosted/web mode is never license-gated (it uses the trial system). Desktop is.
+function isLicensed() { return DESKTOP_MODE ? !!(_license || loadLicense()) : true; }
+
 // ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
@@ -679,6 +709,27 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url === '/version') {
     return json(res, 200, { version: VERSION, build: BUILD, started: STARTED });
+  }
+
+  // License status (public so the activation page can read it). Web mode is
+  // always "licensed" (trial system handles access there).
+  if (req.method === 'GET' && url === '/license/status') {
+    if (!DESKTOP_MODE) return json(res, 200, { licensed: true, mode: 'web' });
+    const lic = _license || loadLicense();
+    return json(res, 200, lic
+      ? { licensed: true, plan: lic.plan, email: lic.email || null, updatesUntil: lic.updatesUntil || null }
+      : { licensed: false });
+  }
+
+  // Activate a desktop license (public in desktop mode; verifies Ed25519, stores it).
+  if (req.method === 'POST' && url === '/license/activate' && DESKTOP_MODE) {
+    const body = JSON.parse(await readBody(req));
+    const lic = verifyLicenseV2(body.key || '');
+    if (!lic) return json(res, 400, { error: 'Invalid or unrecognized license key.' });
+    try { fs.writeFileSync(LICENSE_FILE, (body.key || '').trim()); } catch(e) { return json(res, 500, { error: 'Could not save license.' }); }
+    _license = lic;
+    log('Desktop license activated:', lic.plan, lic.email || '');
+    return json(res, 200, { ok: true, plan: lic.plan });
   }
 
   if (req.method === 'POST' && url === '/auth/register') {
@@ -818,6 +869,11 @@ const server = http.createServer(async (req, res) => {
   // ── main app ─────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
     const htmlHdr = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' };
+    // Desktop, unlicensed → activation page (the free trial lives on the web demo).
+    if (DESKTOP_MODE && !isLicensed()) {
+      res.writeHead(200, htmlHdr);
+      return res.end(fs.readFileSync(path.join(__dirname, 'activate.html'), 'utf8').replace(/__BUILD__/g, BUILD));
+    }
     if (!checkToken(req)) {
       res.writeHead(200, htmlHdr);
       return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8').replace(/__BUILD__/g, BUILD));
@@ -1058,6 +1114,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── AI proxy ─────────────────────────────────────────────────
   if (req.method === 'POST' && url === '/proxy') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     ensureUserSettings(userId);
     const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
     const provider = s?.ai_provider || 'openai';
@@ -1102,6 +1159,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Transcription (local Whisper — offline, no API key, no per-use cost) ──
   if (req.method === 'POST' && url === '/transcribe') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     const body = JSON.parse(await readBody(req));
@@ -1137,6 +1195,7 @@ const server = http.createServer(async (req, res) => {
   // LLM refine pass: clean up ASR errors using the context as a glossary.
   // Layered on top of the local vocabulary correction; uses a cheap model.
   if (req.method === 'POST' && url === '/transcribe/refine') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     ensureUserSettings(userId);
