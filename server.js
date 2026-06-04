@@ -652,11 +652,12 @@ const server = http.createServer(async (req, res) => {
 
   // ── main app ─────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
+    const htmlHdr = { 'Content-Type': 'text/html', 'Cache-Control': 'no-store, must-revalidate' };
     if (!checkToken(req)) {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.writeHead(200, htmlHdr);
       return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8'));
     }
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, htmlHdr);
     return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'));
   }
 
