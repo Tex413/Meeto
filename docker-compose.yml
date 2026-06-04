@@ -4,9 +4,8 @@ services:
   meetintel:
     build: .
     container_name: meetintel
-    # Port not exposed publicly — cloudflared proxies inbound traffic
-    expose:
-      - "7432"
+    ports:
+      - "7432:7432"
     volumes:
       - ./data:/app/data
     env_file:

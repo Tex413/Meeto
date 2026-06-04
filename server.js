@@ -486,8 +486,8 @@ function verifyLicenseKey(key) {
 // ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
-
-  // ── public routes ────────────────────────────────────────────
+  const skipLog = ['/auth/status', '/'].includes(url) || url.startsWith('/static');
+  if (!skipLog) log(`${req.method} ${url}`);
   if (req.method === 'GET' && url === '/landing') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
@@ -872,18 +872,22 @@ const server = http.createServer(async (req, res) => {
         if (!apiKey) return json(res, 400, { error: 'No Anthropic API key saved. Go to Settings to add your key.' });
         const parsedBody = JSON.parse(body);
         parsedBody.model = model;
+        log('proxy: Anthropic provider, model=' + model);
         const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+        log('proxy: Anthropic response', result.status, result.body.substring(0, 80));
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       } else {
         let apiKey = s?.openai_key;
         if (!apiKey) return json(res, 400, { error: 'No OpenAI API key saved. Go to Settings to add your key.' });
         // Auto-route: if an Anthropic key was saved as the OpenAI key, use the Anthropic proxy
-        if (apiKey.startsWith('sk-ant-')) { log('auto-routing: Anthropic key detected in OpenAI slot');
+        if (apiKey.startsWith('sk-ant-')) {
+          log('proxy: auto-routing Anthropic key → Anthropic API');
           const claudeModel = isClaudeModel ? rawModel : 'claude-sonnet-4-6';
           const parsedBody = JSON.parse(body);
           parsedBody.model = claudeModel;
           const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+          log('proxy: Anthropic response', result.status);
           res.writeHead(result.status, { 'Content-Type': 'application/json' });
           return res.end(result.body);
         }

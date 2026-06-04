@@ -654,6 +654,7 @@ html, body {
     <button class="btn small" onclick="openHistory()" title="History"><i class="ti ti-history" aria-hidden="true"></i></button>
     <a class="export-btn" href="/export/csv" target="_blank" title="Export CSV"><i class="ti ti-download" aria-hidden="true"></i></a>
     <button class="btn small" onclick="clearAll()" title="Clear all"><i class="ti ti-trash" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="testAI()" title="Test AI connection" id="testAIBtn"><i class="ti ti-plug" aria-hidden="true"></i> Test AI</button>
     <button class="btn small" onclick="toggleDbg()" title="Debug log"><i class="ti ti-bug" aria-hidden="true"></i></button>
     <button class="btn small" onclick="openSettings()" title="Settings"><i class="ti ti-settings" aria-hidden="true"></i></button>
     <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
@@ -1200,9 +1201,20 @@ async function init() {
   populateMicList();
   stopViz();
 
+  // open debug bar by default so users can see what's happening
+  const dbgEl = document.getElementById('dbgBar');
+  if (dbgEl) { dbgEl.style.maxHeight = '120px'; dbgEl.style.borderBottom = '1px solid #3b82f6'; }
+
+  dbg('Meetintel ready — provider=' + (_userSettings.provider || 'openai') +
+      ' model=' + (_userSettings.model || 'gpt-4o') +
+      ' anthropicKey=' + (_userSettings.hasAnthropicKey ? '✓' : '✗') +
+      ' openaiKey=' + (_userSettings.hasOpenaiKey ? '✓' : '✗') +
+      ' tier=' + _userSettings.tier);
+
   // if no OpenAI key, switch default STT to Web Speech (Whisper needs OpenAI)
   if (!_userSettings.hasOpenaiKey) {
     setSttMode('webspeech');
+    dbg('No OpenAI key — defaulting to Web Speech mode');
   }
   // show setup guidance if no API key at all
   if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
@@ -1690,10 +1702,37 @@ function renderTranscript(interimText) {
   el.scrollTop = el.scrollHeight;
 }
 
+async function testAI() {
+  const btn = document.getElementById('testAIBtn');
+  btn.disabled = true;
+  dbg('Testing AI connection...');
+  try {
+    const resp = await fetch('/proxy', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 20, messages: [{ role: 'user', content: 'Reply with just the word OK' }] })
+    });
+    const data = await resp.json();
+    if (data.content?.[0]?.text) {
+      dbg('✓ AI test passed — response: ' + data.content[0].text.trim());
+    } else if (data.error) {
+      const { title, body: b } = friendlyApiError(data.error);
+      dbg('✗ AI test FAILED — ' + title + ': ' + b);
+      showApiError(data.error);
+    } else {
+      dbg('✗ AI test unexpected response: ' + JSON.stringify(data).substring(0, 100));
+    }
+  } catch(e) {
+    dbg('✗ AI test error: ' + e.message);
+  }
+  btn.disabled = false;
+}
+
 async function maybeAnalyze() {
   if (analysisRunning) return;
   const newWords = transcript_final.slice(lastSent.length).trim();
-  if (wordCount(newWords) < 12) return;
+  const nw = wordCount(newWords);
+  if (nw < 12) { dbg('Analysis skipped — only ' + nw + ' new words (need 12)'); return; }
+  dbg('Triggering analysis — ' + nw + ' new words');
   lastSent = transcript_final;
   analysisRunning = true;
   setStatus('thinking', 'Analyzing...');
