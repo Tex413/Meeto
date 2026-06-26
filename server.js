@@ -8,7 +8,7 @@ const https = require('https');
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
 // is actually being served (visible in the debug log and at /version).
 const VERSION = '2.1.0';
-const BUILD = 8;
+const BUILD = 9;
 const STARTED = new Date().toISOString();
 
 const PORT = parseInt(process.env.PORT || '7432');
@@ -17,11 +17,14 @@ const IS_HTTPS = PUBLIC_URL.startsWith('https://');
 // Desktop (Electron) mode: single local user, no login/registration. Set by main.js.
 // When off (hosted/web demo), all the multi-user/auth behavior is unchanged.
 const DESKTOP_MODE = process.env.DESKTOP_MODE === '1';
+// Unpackaged dev build (set by main.js): bypass license gates for local testing.
+const DESKTOP_DEV = process.env.DESKTOP_DEV === '1';
 let LOCAL_USER_ID = 1; // resolved during initDb when DESKTOP_MODE is on
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
 const MODELS_DIR = path.join(DATA_DIR, 'models');
+const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
 const LOG_FILE = path.join(DATA_DIR, 'meetintel.log');
 const ENV_FILE = path.join(DATA_DIR, '.env');
 
@@ -32,6 +35,7 @@ const TRIAL_DELETE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
 if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
+if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
 
 function log(...args) {
   const line = new Date().toISOString() + ' ' + args.join(' ');
@@ -131,6 +135,8 @@ async function initDb() {
   migrate('ALTER TABLE cards ADD COLUMN deleted INTEGER DEFAULT 0');
   migrate('ALTER TABLE users ADD COLUMN reset_token TEXT');
   migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
+  // Desktop A/V recording: local file under DATA_DIR/recordings, referenced by name.
+  migrate('ALTER TABLE meetings ADD COLUMN recording_path TEXT');
 
   // Data fix: an Anthropic key (sk-ant-) saved in the OpenAI slot breaks
   // Whisper transcription and confuses provider routing. Normalize it.
@@ -689,8 +695,9 @@ function loadLicense() {
   catch(e) { _license = null; }
   return _license;
 }
-// Hosted/web mode is never license-gated (it uses the trial system). Desktop is.
-function isLicensed() { return DESKTOP_MODE ? !!(_license || loadLicense()) : true; }
+// Hosted/web mode is never license-gated (it uses the trial system). Desktop is,
+// except in an unpackaged dev build (DESKTOP_DEV) so the app is testable locally.
+function isLicensed() { return (DESKTOP_MODE && !DESKTOP_DEV) ? !!(_license || loadLicense()) : true; }
 
 // ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
@@ -879,7 +886,9 @@ const server = http.createServer(async (req, res) => {
       return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8').replace(/__BUILD__/g, BUILD));
     }
     res.writeHead(200, htmlHdr);
-    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8').replace(/__BUILD__/g, `${VERSION} build ${BUILD}`));
+    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+      .replace(/__BUILD__/g, `${VERSION} build ${BUILD}`)
+      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0'));
   }
 
   // ── all routes below require auth ────────────────────────────
@@ -1035,11 +1044,75 @@ const server = http.createServer(async (req, res) => {
     saveDb(); return json(res, 200, { ok: true });
   }
 
+  // Replace just the transcript (used when generating it from a recording —
+  // does NOT touch total_cards/ended_at so it won't clobber existing meeting data).
+  if (req.method === 'POST' && url === '/meeting/transcript') {
+    const body = JSON.parse(await readBody(req));
+    db.run(`UPDATE meetings SET transcript=?, word_count=? WHERE id=? AND user_id=${userId}`,
+      [body.transcript || '', body.wordCount || 0, body.id]);
+    saveDb(); return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && url === '/meeting/end') {
     const body = JSON.parse(await readBody(req));
     db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
       [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
     saveDb(); return json(res, 200, { ok: true });
+  }
+
+  // ── A/V recording (desktop only: large files stored on local disk) ──
+  // Upload: streamed straight to disk so a long meeting never buffers in RAM.
+  if (req.method === 'POST' && url === '/recording/upload') {
+    if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
+    if (!isLicensed()) return json(res, 402, { error: 'license_required' });
+    const meetingId = parseInt(new URL(req.url, 'http://x').searchParams.get('meetingId') || '0');
+    if (!meetingId) return json(res, 400, { error: 'missing meetingId' });
+    const own = dbGet(`SELECT id FROM meetings WHERE id=${meetingId} AND user_id=${userId}`);
+    if (!own) return json(res, 404, { error: 'meeting not found' });
+    const filename = `meeting-${meetingId}.webm`;
+    const dest = path.join(RECORDINGS_DIR, filename);
+    const ws = fs.createWriteStream(dest);
+    req.pipe(ws);
+    ws.on('finish', () => {
+      db.run(`UPDATE meetings SET recording_path=? WHERE id=${meetingId}`, [filename]);
+      saveDb();
+      let size = 0; try { size = fs.statSync(dest).size; } catch(e) {}
+      log(`Recording saved: ${dest} (${Math.round(size/1024/1024*10)/10} MB)`);
+      return json(res, 200, { ok: true, path: filename, bytes: size });
+    });
+    ws.on('error', e => { log('Recording write error:', e.message); try { json(res, 500, { error: e.message }); } catch(_) {} });
+    req.on('error', e => { log('Recording upload req error:', e.message); ws.destroy(); });
+    return;
+  }
+
+  // Stream a saved recording back to the player, with HTTP Range support so
+  // the <video> element can seek without downloading the whole file.
+  if (req.method === 'GET' && url.startsWith('/recording/')) {
+    if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
+    const id = parseInt(url.split('/')[2]);
+    const row = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    if (!row || !row.recording_path) return json(res, 404, { error: 'no recording' });
+    const file = path.join(RECORDINGS_DIR, row.recording_path);
+    if (!fs.existsSync(file)) return json(res, 404, { error: 'file missing' });
+    const stat = fs.statSync(file);
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
+      let start = m[1] ? parseInt(m[1]) : 0;
+      let end = m[2] ? parseInt(m[2]) : stat.size - 1;
+      if (isNaN(start) || start < 0) start = 0;
+      if (isNaN(end) || end >= stat.size) end = stat.size - 1;
+      if (start > end) { res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` }); return res.end(); }
+      res.writeHead(206, {
+        'Content-Type': 'video/webm',
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': end - start + 1
+      });
+      return fs.createReadStream(file, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { 'Content-Type': 'video/webm', 'Content-Length': stat.size, 'Accept-Ranges': 'bytes' });
+    return fs.createReadStream(file).pipe(res);
   }
 
   if (req.method === 'POST' && url === '/card/save') {
@@ -1053,17 +1126,18 @@ const server = http.createServer(async (req, res) => {
     stmt.free(); saveDb(); return json(res, 200, { ok: true, ids });
   }
 
-  // Persist a card's pinned/deleted state (scoped to the user's own meetings).
+  // Persist a card's pinned/deleted state, or a merged body (scoped to the user's own meetings).
   if (req.method === 'POST' && url === '/card/update') {
-    const { id, pinned, deleted } = JSON.parse(await readBody(req));
+    const { id, pinned, deleted, body: cardBody } = JSON.parse(await readBody(req));
     const cid = parseInt(id);
     if (!cid) return json(res, 400, { error: 'bad id' });
     const own = dbGet(`SELECT c.id FROM cards c JOIN meetings m ON m.id = c.meeting_id WHERE c.id = ${cid} AND m.user_id = ${userId}`);
     if (!own) return json(res, 404, { error: 'not found' });
-    const sets = [];
+    const sets = [], params = [];
     if (pinned !== undefined) sets.push(`pinned = ${pinned ? 1 : 0}`);
     if (deleted !== undefined) sets.push(`deleted = ${deleted ? 1 : 0}`);
-    if (sets.length) { db.run(`UPDATE cards SET ${sets.join(', ')} WHERE id = ${cid}`); saveDb(); }
+    if (cardBody !== undefined) { sets.push(`body = ?`); params.push(String(cardBody)); }
+    if (sets.length) { db.run(`UPDATE cards SET ${sets.join(', ')} WHERE id = ${cid}`, params); saveDb(); }
     return json(res, 200, { ok: true });
   }
 
@@ -1086,6 +1160,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
+    // Remove the recording file too (scoped to the user's own meeting).
+    const own = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    if (own && own.recording_path) {
+      try { fs.unlinkSync(path.join(RECORDINGS_DIR, own.recording_path)); } catch(e) {}
+    }
     db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
     db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
     saveDb(); return json(res, 200, { ok: true });
