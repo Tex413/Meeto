@@ -917,7 +917,7 @@ html, body {
       <input type="number" id="gainInput" value="10" min="1" max="30" step="1" style="width:46px;font-size:12px;padding:3px 6px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--surface);color:var(--text);text-align:center;" oninput="setGain(this.value)" />
       <span class="ctrl-val">×</span>
       <div class="ctrl-sep"></div>
-      <label title="Whisper chunk size — larger = more complete sentences but higher latency">Chunk</label>
+      <label title="Max chunk length (safety cap for continuous speech without pauses) — chunks normally flush sooner, at a natural pause">Chunk</label>
       <select id="chunkSelect" class="mic-select" style="width:60px;" onchange="CHUNK_SEC = parseInt(this.value)">
         <option value="3">3 s</option>
         <option value="4" selected>4 s</option>
@@ -1068,7 +1068,11 @@ let _gainNode = null;
 let _sampleBuf = [];
 let _chunkQueue = [], _chunkProcessing = false;
 const CAPTURE_RATE = 16000;
-let CHUNK_SEC = 4;
+let CHUNK_SEC = 4;   // now an upper-bound safety cap — see startWhisper()'s onaudioprocess
+const MIN_CHUNK_SEC = 1.5;      // floor — a short pause between words shouldn't fragment into tiny chunks
+const SILENCE_FLUSH_SEC = 0.6;  // this much trailing quiet after real speech = flush now, sentence is done
+let _silentSamplesRun = 0;      // running count of consecutive near-silent samples in the current buffer
+let _hasSpeechInBuf = false;    // has the current buffer seen real speech yet (vs. still all silence)
 let lastSent = '', cardCount = 0;
 let autoClearMs = 0;                     // 0 = off; otherwise ms after which unpinned cards fade out
 let cardSearchTerm = '';                 // current card filter text (lowercased)
@@ -1890,6 +1894,8 @@ async function startWhisper() {
   if (!source) return;
 
   _sampleBuf = [];
+  _silentSamplesRun = 0;
+  _hasSpeechInBuf = false;
   let spCalls = 0;
 
   // Try ScriptProcessorNode first
@@ -1899,11 +1905,29 @@ async function startWhisper() {
     if (spCalls === 1) dbg('ScriptProcessor firing — collecting audio');
     if (spCalls % 100 === 0) dbg('SP calls: ' + spCalls + '  buf: ' + _sampleBuf.length + '  queue: ' + _chunkQueue.length);
     const data = ev.inputBuffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) _sampleBuf.push(data[i]);
-    const targetLen = audioCtx.sampleRate * CHUNK_SEC;
-    while (_sampleBuf.length >= targetLen) {
-      dbg('Chunk ready — queuing for Whisper');
-      queueChunk(new Float32Array(_sampleBuf.splice(0, targetLen)), iAmTalking);
+    let energy = 0;
+    for (let i = 0; i < data.length; i++) { _sampleBuf.push(data[i]); energy += data[i] * data[i]; }
+
+    // Flush on a natural pause instead of always waiting for a fixed clock —
+    // a fixed-length chunk was slicing sentences in half mid-thought (see the
+    // accuracy evaluation). Same 0.05 RMS threshold already tuned for this
+    // app's 10x-boosted mic input in queueChunk()'s frame-level VAD, not a
+    // new number invented here.
+    const blockRms = Math.sqrt(energy / data.length);
+    if (blockRms > 0.05) { _hasSpeechInBuf = true; _silentSamplesRun = 0; }
+    else { _silentSamplesRun += data.length; }
+
+    const sr = audioCtx.sampleRate;
+    const bufSec = _sampleBuf.length / sr;
+    const pausedLongEnough = _hasSpeechInBuf && (_silentSamplesRun / sr) >= SILENCE_FLUSH_SEC && bufSec >= MIN_CHUNK_SEC;
+    const hitMaxLength = bufSec >= CHUNK_SEC;
+
+    if (pausedLongEnough || hitMaxLength) {
+      dbg('Chunk ready (' + (pausedLongEnough ? 'pause detected' : 'max length') + ', ' + bufSec.toFixed(1) + 's) — queuing for Whisper');
+      queueChunk(new Float32Array(_sampleBuf), iAmTalking);
+      _sampleBuf = [];
+      _silentSamplesRun = 0;
+      _hasSpeechInBuf = false;
     }
   };
   source.connect(processorNode);
@@ -1972,7 +1996,7 @@ function stopListen() {
   audioCtx?.close(); audioCtx = null;
   micStream?.getTracks().forEach(t => t.stop()); micStream = null;
   analyserNode = null; _gainNode = null;
-  _chunkQueue = []; _sampleBuf = [];
+  _chunkQueue = []; _sampleBuf = []; _silentSamplesRun = 0; _hasSpeechInBuf = false;
   clearInterval(tickInterval);
   setStatus('', 'Stopped');
   refineTurns(true);   // flush: refine any remaining turns, including the last

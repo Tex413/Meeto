@@ -491,7 +491,7 @@ function spawnInferenceWorker() {
     workerData: { modelsDir: MODELS_DIR }
   });
   worker.on('message', msg => {
-    if (msg.type === 'ready') { log('Inference worker ready (Whisper quantized + embedder warm).'); return; }
+    if (msg.type === 'ready') { log('Inference worker ready (Whisper small.en + embedder warm).'); return; }
     if (msg.type === 'ready-error') { log('Inference worker failed to warm models:', msg.error); return; }
     const job = _inferenceJobs.get(msg.id);
     if (!job) return;

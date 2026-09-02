@@ -18,13 +18,18 @@ async function getTransformers() {
   return _tf;
 }
 
-// Quantized (int8) — was fp32 before this moved off the main thread, which was
-// most of the real transcription latency. The embedder was already quantized.
+// small.en, unquantized: base.en was noticeably inaccurate on real
+// conversational speech (see server log evidence from the accuracy
+// evaluation), and since this runs off the main thread anyway, slower
+// inference just means each chunk takes a bit longer to come back — it
+// doesn't freeze the app. Unquantized (fp32) trades some of that speed for
+// the accuracy quantization gives up; the embedder stays quantized since
+// it's not what was inaccurate.
 let _whisper = null;
 async function getWhisper() {
   if (_whisper) return _whisper;
   const { pipeline } = await getTransformers();
-  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en', { quantized: true });
+  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en');
   return _whisper;
 }
 
