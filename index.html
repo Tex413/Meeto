@@ -226,6 +226,14 @@ html, body {
   background: var(--surface2); border: 1px solid var(--border2); color: var(--text2);
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
+/* Always-visible reminder of the wake word + injection mode — this used to
+   only live in Settings, which meant nobody knew to say it. */
+.wake-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px;
+  background: rgba(34,211,238,0.1); border: 1px solid rgba(34,211,238,0.3); color: #22d3ee;
+  white-space: nowrap; cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.wake-badge:hover { background: rgba(34,211,238,0.2); }
 .stock-badge.up { color: var(--green); border-color: rgba(34,197,94,0.35); background: var(--green-bg); }
 .stock-badge.down { color: var(--danger-text); border-color: var(--danger-border); background: var(--danger-bg); }
 
@@ -843,6 +851,7 @@ html, body {
     <!-- Board-member presence + BKV stock -->
     <div class="presence-group" title="Meeteor">
       <div class="presence-orb" id="presenceOrb" onclick="openPresenterView()" style="cursor:pointer" title="Click to expand for the room"></div>
+      <button class="wake-badge" id="wakeBadge" onclick="openSettings()"></button>
       <span class="stock-badge" id="bkvBadge" title="BKV Corporation">BKV --</span>
     </div>
   </div>
@@ -1646,6 +1655,7 @@ async function init() {
   stopViz();
   initLocalControlChannel();
   initIntelTicker();
+  renderWakeBadge();
 
   dbg('━━ Meetintel v' + APP_BUILD + ' ━━');
   const bb = document.getElementById('buildBadge');
@@ -2320,6 +2330,15 @@ function pushTurn(text, isMe) {
 // more reliably. Changing it takes effect immediately, no reload needed.
 let BOARD_MEMBER_NAME = (localStorage.getItem('wakeWord') || 'craig').trim().toLowerCase();
 function wakeWordName() { return BOARD_MEMBER_NAME.charAt(0).toUpperCase() + BOARD_MEMBER_NAME.slice(1); }
+// The wake word + mode used to be Settings-only, which meant there was no way
+// to discover you had to say "Craig, ..." to get anything out of this at all.
+function renderWakeBadge() {
+  const el = document.getElementById('wakeBadge');
+  if (!el) return;
+  const modeLabel = INJECTION_MODE === 'suggest-approve' ? 'Suggest & approve' : 'Ask-only';
+  el.textContent = `🎙️ Say "${wakeWordName()}" · ${modeLabel}`;
+  el.title = `Say "${wakeWordName()}" to get an instant spoken answer (e.g. "${wakeWordName()}, what's BKV trading at?"). Mode: ${modeLabel}. Click to change.`;
+}
 // How proactive the board member is: 'ask-only' (default) only ever answers when
 // addressed; 'suggest-approve' also offers to speak up about competitor research
 // it finds. Autonomous (unprompted, no approval) isn't offered yet — no trust/
@@ -3415,6 +3434,7 @@ async function saveSettings() {
   if (ww) { BOARD_MEMBER_NAME = ww; localStorage.setItem('wakeWord', ww); }
   const im = document.getElementById('settingsInjectionMode').value;
   INJECTION_MODE = im; localStorage.setItem('injectionMode', im);
+  renderWakeBadge();
   await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   await loadUserSettings();
   btn.disabled = false; btn.textContent = 'Save';
