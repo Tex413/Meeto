@@ -283,6 +283,7 @@ html, body {
 .tag-general { background: var(--surface2); color: var(--text2); }
 .tag-fact-check { background: var(--danger-bg); color: var(--danger-text); }
 .tag-action-item { background: var(--warn-bg); color: var(--warn-text); border: 0.5px solid var(--warn-border); }
+.tag-board-member { background: rgba(34,211,238,0.12); color: #22d3ee; }
 .card-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
 .card-body { font-size: 13px; line-height: 1.65; color: var(--text2); }
 .card-body code { font-family: 'Consolas', monospace; font-size: 11px; background: var(--surface2); padding: 1px 4px; border-radius: 3px; color: var(--text); }
@@ -480,6 +481,9 @@ html, body {
 .card.tag-action-item { background: rgba(245,158,11,0.07); border-color: rgba(245,158,11,0.2); }
 .card.tag-action-item::before { background: #f59e0b; }
 .card.tag-action-item:hover { box-shadow: 0 6px 28px rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.38); }
+.card.tag-board-member { background: rgba(34,211,238,0.06); border-color: rgba(34,211,238,0.22); }
+.card.tag-board-member::before { background: #22d3ee; }
+.card.tag-board-member:hover { box-shadow: 0 6px 28px rgba(34,211,238,0.18); border-color: rgba(34,211,238,0.4); }
 
 .card.tag-foundry { background: rgba(59,130,246,0.07); border-color: rgba(59,130,246,0.2); }
 .card.tag-foundry::before { background: #3b82f6; }
@@ -527,6 +531,7 @@ html, body {
 .tag-general    { background: var(--surface3); color: var(--text2); border: 1px solid var(--border2); }
 .tag-fact-check { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
 .tag-action-item { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+.tag-board-member { background: rgba(34,211,238,0.15); color: #22d3ee; border: 1px solid rgba(34,211,238,0.3); }
 
 .card-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; letter-spacing: -0.01em; line-height: 1.35; }
 .card-body { font-size: 12px; line-height: 1.7; color: var(--text2); }
@@ -1810,6 +1815,7 @@ async function startWebSpeech() {
         if (wordCount(text) >= 1) {
           transcript_final += text + ' ';
           pushTurn(text, iAmTalking);
+          checkForAddressTrigger();
         }
       } else {
         interimText += ev.results[i][0].transcript;
@@ -2138,6 +2144,9 @@ function closePresenterView() {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePresenterView(); });
 
 function queueChunk(samples, isMe, nativeRate) {
+  // Don't transcribe our own spoken answer — without this the mic picks the
+  // TTS playback back up, pollutes the transcript, and can re-trigger "meeteor".
+  if (_speaking) { dbg('Chunk: dropped (Meeteor is speaking)'); return; }
   let energy = 0;
   for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
   const rms = Math.sqrt(energy / samples.length);
@@ -2237,6 +2246,7 @@ async function processChunkQueue() {
         } else {
           transcript_final += clean + ' ';
           pushTurn(clean, isMe);
+          checkForAddressTrigger();
           renderTranscript();
         }
       }
@@ -2265,6 +2275,7 @@ let turnChunks = [];
 let turnTimestamps = [];
 let turnSpeakers = [];
 let turnRefined = [];   // per-turn: has the LLM refine pass run on this turn yet
+let turnAnswered = [];  // per-turn: have we already fired an addressed answer for this turn
 let _lastTurnTime = 0;
 let _lastTurnSpeaker = null;
 
@@ -2284,6 +2295,100 @@ function pushTurn(text, isMe) {
     _lastTurnSpeaker = isMe;
   }
   _lastTurnTime = now;
+}
+
+// ── Instant address detection: "Meeteor, ..." gets answered right away —
+// no waiting on the ~20s periodic analysis timer. Debounced off the same
+// turn-merging pushTurn() already does, rather than a second segmentation
+// pass: if the current turn keeps growing (the speaker is still talking),
+// the timer restarts; it only fires once the turn's gone quiet a moment.
+const BOARD_MEMBER_NAME = 'meeteor';
+const ADDRESS_DEBOUNCE_MS = 1500;
+let _addressTimer = null;
+function checkForAddressTrigger() {
+  const idx = turnChunks.length - 1;
+  if (idx < 0 || turnAnswered[idx]) return;
+  const text = turnChunks[idx];
+  const pos = text.toLowerCase().lastIndexOf(BOARD_MEMBER_NAME);
+  if (pos === -1) return;
+  if (_addressTimer) clearTimeout(_addressTimer);
+  _addressTimer = setTimeout(() => {
+    _addressTimer = null;
+    if (turnAnswered[idx]) return;
+    const question = turnChunks[idx].slice(pos + BOARD_MEMBER_NAME.length).replace(/^[,:\s]+/, '').trim();
+    turnAnswered[idx] = true;
+    if (question) answerDirectQuestion(question);
+  }, ADDRESS_DEBOUNCE_MS);
+}
+
+// Answers a question addressed directly to "Meeteor" — same RAG + live-ticker
+// context maybeAnalyze() builds, but a short conversational answer (meant to
+// be spoken) instead of a JSON insight-card array.
+async function answerDirectQuestion(question) {
+  setPresenceState('thinking');
+  const ctx = document.getElementById('ctx').value.trim();
+
+  let ragContext = '';
+  try {
+    const sr = await fetch('/documents/search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: question, topK: 4 })
+    });
+    const sd = await sr.json();
+    if (sd.chunks && sd.chunks.length) {
+      ragContext = '\n\nRELEVANT DOCUMENT EXCERPTS (use these for specific facts, specs, and details):\n' +
+        sd.chunks.map(c => `[${c.docName}]\n${c.text}`).join('\n\n---\n\n');
+    }
+  } catch(e) { /* non-fatal */ }
+
+  let intelContext = '';
+  try {
+    const ir = await fetch('/api/intel-snapshot');
+    const id = await ir.json();
+    if (id.text) intelContext = '\n\nLIVE MARKET DATA (current as of ' + id.asOf + ' — use these exact figures if relevant, do not estimate):\n' + id.text;
+  } catch(e) { /* non-fatal */ }
+
+  const system = `You are Meeteor, a virtual board member sitting in on this live meeting. You were just addressed by name and asked a direct question — answer it now.
+
+${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${intelContext}
+
+Answer in 1-3 short sentences, conversationally — this will be read aloud, so no markdown, no bullet points, no code blocks. If you don't have enough information to answer confidently, say so briefly rather than guessing.`;
+
+  try {
+    const resp = await fetch('/proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514', max_tokens: 300, system,
+        messages: [{ role: 'user', content: question }]
+      })
+    });
+    const data = await resp.json();
+    const answer = data?.content?.[0]?.text?.trim();
+    if (answer) {
+      addCards([{ tag: 'board-member', title: question.length > 60 ? question.slice(0, 60) + '…' : question, body: answer }]);
+      speakAnswer(answer);
+    } else {
+      dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
+      setPresenceState(listening ? 'listening' : 'idle');
+    }
+  } catch(e) {
+    dbg('Addressed question failed: ' + e.message);
+    setPresenceState(listening ? 'listening' : 'idle');
+  }
+}
+
+// Speaks the answer via the browser's built-in TTS and drives the presence
+// orb's "speaking" state (defined in Phase 1, unused until now).
+let _speaking = false;
+function speakAnswer(text) {
+  if (!('speechSynthesis' in window)) { setPresenceState(listening ? 'listening' : 'idle'); return; }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.onstart = () => { _speaking = true; setPresenceState('speaking'); };
+  const done = () => { _speaking = false; setPresenceState(listening ? 'listening' : 'idle'); };
+  utter.onend = done;
+  utter.onerror = done;
+  window.speechSynthesis.speak(utter);
 }
 
 // LLM refine pass over finalized turns. Layered on top of the local correction.
@@ -2765,7 +2870,7 @@ function showThinking() {
 function removeThinking() { document.getElementById('thinking')?.remove(); }
 
 function clearAll() {
-  transcript_final = ''; interim = ''; lastSent = ''; cardCount = 0; turnChunks = []; turnTimestamps = []; turnSpeakers = []; turnRefined = []; todos = []; renderTodos();
+  transcript_final = ''; interim = ''; lastSent = ''; cardCount = 0; turnChunks = []; turnTimestamps = []; turnSpeakers = []; turnRefined = []; turnAnswered = []; todos = []; renderTodos();
   document.getElementById('transcript').innerHTML = '<p class="ph">Cleared. Ready to listen again.</p>';
   document.getElementById('cards').innerHTML = '<div class="ph-cards"><i class="ti ti-brain" aria-hidden="true"></i>Insight cards will appear here.</div>';
   document.getElementById('wc').textContent = '0 words';
