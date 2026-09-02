@@ -1631,10 +1631,6 @@ async function init() {
   initLocalControlChannel();
   initIntelTicker();
 
-  // open debug bar by default so users can see what's happening
-  const dbgEl = document.getElementById('dbgBar');
-  if (dbgEl) { dbgEl.style.maxHeight = '120px'; dbgEl.style.borderBottom = '1px solid #3b82f6'; }
-
   dbg('━━ Meetintel v' + APP_BUILD + ' ━━');
   const bb = document.getElementById('buildBadge');
   if (bb) bb.textContent = 'v' + APP_BUILD;
@@ -2297,12 +2293,16 @@ function pushTurn(text, isMe) {
   _lastTurnTime = now;
 }
 
-// ── Instant address detection: "Meeteor, ..." gets answered right away —
+// ── Instant address detection: "<wake word>, ..." gets answered right away —
 // no waiting on the ~20s periodic analysis timer. Debounced off the same
 // turn-merging pushTurn() already does, rather than a second segmentation
 // pass: if the current turn keeps growing (the speaker is still talking),
 // the timer restarts; it only fires once the turn's gone quiet a moment.
-const BOARD_MEMBER_NAME = 'meeteor';
+// Configurable (Settings) rather than hardcoded "Meeteor" — that's a made-up
+// brand word Whisper has never seen in training data and mishears constantly,
+// especially with an accent; an ordinary name like "Craig" transcribes far
+// more reliably. Changing it takes effect immediately, no reload needed.
+let BOARD_MEMBER_NAME = (localStorage.getItem('wakeWord') || 'craig').trim().toLowerCase();
 const ADDRESS_DEBOUNCE_MS = 1500;
 let _addressTimer = null;
 function checkForAddressTrigger() {
@@ -2348,7 +2348,8 @@ async function answerDirectQuestion(question) {
     if (id.text) intelContext = '\n\nLIVE MARKET DATA (current as of ' + id.asOf + ' — use these exact figures if relevant, do not estimate):\n' + id.text;
   } catch(e) { /* non-fatal */ }
 
-  const system = `You are Meeteor, a virtual board member sitting in on this live meeting. You were just addressed by name and asked a direct question — answer it now.
+  const personaName = BOARD_MEMBER_NAME.charAt(0).toUpperCase() + BOARD_MEMBER_NAME.slice(1);
+  const system = `You are ${personaName}, a virtual board member sitting in on this live meeting. You were just addressed by name and asked a direct question — answer it now.
 
 ${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${intelContext}
 
@@ -3257,6 +3258,7 @@ function renderSettings() {
   document.getElementById('settingsAnthropicKey').value = '';
   document.getElementById('settingsOpenaiKey').value = '';
   document.getElementById('settingsEiaKey').value = '';
+  document.getElementById('settingsWakeWord').value = BOARD_MEMBER_NAME.charAt(0).toUpperCase() + BOARD_MEMBER_NAME.slice(1);
 }
 
 function updateModelOptions() {
@@ -3280,6 +3282,8 @@ async function saveSettings() {
   if (ak) body.anthropicKey = ak;
   if (ok) body.openaiKey = ok;
   if (ek) body.eiaApiKey = ek;
+  const ww = document.getElementById('settingsWakeWord').value.trim().toLowerCase();
+  if (ww) { BOARD_MEMBER_NAME = ww; localStorage.setItem('wakeWord', ww); }
   await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   await loadUserSettings();
   btn.disabled = false; btn.textContent = 'Save';
@@ -3338,6 +3342,10 @@ init();
     <div class="settings-row">
       <label>Model</label>
       <select id="settingsModel"></select>
+    </div>
+    <div class="settings-row">
+      <label>Wake word <span style="font-weight:400;color:var(--text3)">(say this to get an instant spoken answer, e.g. "Craig, what's BKV trading at")</span></label>
+      <input type="text" id="settingsWakeWord" placeholder="Craig" autocomplete="off" />
     </div>
     <div class="settings-row">
       <label>OpenAI API Key</label>
