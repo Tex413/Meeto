@@ -925,17 +925,14 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
-  // ── Local Piper TTS (client-side WASM) — serve our own copy of the library's
-  // browser bundle so the app isn't depending on a CDN for its own JS. The
-  // library itself still fetches the ONNX Runtime Web WASM binaries from
-  // cdnjs and voice model weights from HuggingFace at runtime — same
-  // "needs internet once, then cached" shape Whisper already has.
-  if (req.method === 'GET' && url.startsWith('/vendor/piper/')) {
-    const rel = decodeURIComponent(url.slice('/vendor/piper/'.length));
+  // Serves a static file from a vendored npm package's dist directory —
+  // client-side libraries we host ourselves rather than depending on a CDN
+  // for our own JS (Piper TTS, MediaPipe vision). Blocks path traversal.
+  function serveVendorFile(rel, baseDir) {
     if (rel.includes('..')) { res.writeHead(400); return res.end('bad path'); }
-    const filePath = path.join(__dirname, 'node_modules', '@mintplex-labs', 'piper-tts-web', 'dist', rel);
+    const filePath = path.join(baseDir, rel);
     const ext = path.extname(filePath).toLowerCase();
-    const contentType = ext === '.js' ? 'application/javascript; charset=utf-8'
+    const contentType = (ext === '.js' || ext === '.mjs' || ext === '.cjs') ? 'application/javascript; charset=utf-8'
       : ext === '.json' ? 'application/json; charset=utf-8'
       : ext === '.wasm' ? 'application/wasm'
       : 'application/octet-stream';
@@ -944,6 +941,24 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400' });
       return res.end(data);
     } catch(e) { res.writeHead(404); return res.end('not found'); }
+  }
+
+  // Local Piper TTS (client-side WASM) — the library itself still fetches the
+  // ONNX Runtime Web WASM binaries from cdnjs and voice model weights from
+  // HuggingFace at runtime — same "needs internet once, then cached" shape
+  // Whisper already has.
+  if (req.method === 'GET' && url.startsWith('/vendor/piper/')) {
+    return serveVendorFile(decodeURIComponent(url.slice('/vendor/piper/'.length)),
+      path.join(__dirname, 'node_modules', '@mintplex-labs', 'piper-tts-web', 'dist'));
+  }
+
+  // Local MediaPipe vision runtime (presence/hand-raise detection — see
+  // initRoomCamera() in index.html). The JS bundle and WASM binaries are both
+  // served from here; only the small detection models themselves are fetched
+  // from storage.googleapis.com at runtime.
+  if (req.method === 'GET' && url.startsWith('/vendor/mediapipe/')) {
+    return serveVendorFile(decodeURIComponent(url.slice('/vendor/mediapipe/'.length)),
+      path.join(__dirname, 'node_modules', '@mediapipe', 'tasks-vision'));
   }
 
   if (req.method === 'GET' && url === '/auth/status') {

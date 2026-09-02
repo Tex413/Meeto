@@ -234,6 +234,13 @@ html, body {
   white-space: nowrap; cursor: pointer; font-family: inherit; transition: background 0.15s;
 }
 .wake-badge:hover { background: rgba(34,211,238,0.2); }
+/* Persistent, undismissable while active — the room needs to be able to see
+   this at a glance. Not optional polish; this IS the consent signal. */
+.camera-badge {
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 99px;
+  background: rgba(239,68,68,0.14); border: 1px solid rgba(239,68,68,0.4); color: #f87171;
+  white-space: nowrap; display: none; animation: pulse 2s infinite;
+}
 .stock-badge.up { color: var(--green); border-color: rgba(34,197,94,0.35); background: var(--green-bg); }
 .stock-badge.down { color: var(--danger-text); border-color: var(--danger-border); background: var(--danger-bg); }
 
@@ -845,11 +852,13 @@ html, body {
     <button class="btn small" onclick="clearAll()" title="Clear all"><i class="ti ti-trash" aria-hidden="true"></i></button>
     <button class="btn small" onclick="testAI()" title="Test AI connection" id="testAIBtn"><i class="ti ti-plug" aria-hidden="true"></i> Test AI</button>
     <button class="btn small" onclick="toggleDbg()" title="Debug log"><i class="ti ti-bug" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="toggleRoomCamera()" id="cameraToggleBtn" title="Enable room camera — presence/hand-raise detection only, ephemeral, nothing ever recorded or sent anywhere"><i class="ti ti-camera" aria-hidden="true"></i></button>
     <button class="btn small" onclick="openSettings()" title="Settings"><i class="ti ti-settings" aria-hidden="true"></i></button>
     <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
     <div class="topbar-sep"></div>
     <!-- Board-member presence + BKV stock -->
     <div class="presence-group" title="Meeteor">
+      <span class="camera-badge" id="cameraBadge"></span>
       <div class="presence-orb" id="presenceOrb" onclick="openPresenterView()" style="cursor:pointer" title="Click to expand for the room"></div>
       <button class="wake-badge" id="wakeBadge" onclick="openSettings()"></button>
       <span class="stock-badge" id="bkvBadge" title="BKV Corporation">BKV --</span>
@@ -2165,6 +2174,112 @@ function closePresenterView() {
   document.getElementById('presenterView')?.classList.remove('open');
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePresenterView(); });
+
+// ── Room camera: ephemeral presence/hand-raise detection ───────
+// Opt-in, separate from mic listening, OFF by default every session (unlike
+// the wake word/injection-mode preferences, this one is never remembered —
+// it should never silently turn itself on). A frame is read, two numbers are
+// derived (face count, hand raised), then the frame is discarded — nothing
+// is written to disk or sent anywhere; this never touches the server at all.
+// No face recognition, ever — FaceDetector only locates anonymous boxes, it
+// never identifies who anyone is. The camera-badge next to the presence orb
+// is not optional UI polish: it's the consent signal, and it stays visible
+// the entire time the camera is on.
+let _cameraStream = null, _cameraDetectInterval = null;
+let _faceDetector = null, _handLandmarker = null;
+let _cameraVideo = null, _cameraCanvas = null, _cameraCtx = null;
+// Guards the multi-step async startup (getUserMedia -> video ready -> two
+// remote model loads) against a second toggle click landing mid-sequence —
+// without this, a stop clicked while starting would get silently overwritten
+// when the original start call resumed, leaking an orphaned detection
+// interval and undisposed detector objects with no UI sign anything was
+// still running in the background.
+let _cameraStarting = false, _cameraStopRequested = false;
+
+async function toggleRoomCamera() {
+  if (_cameraStarting) { _cameraStopRequested = true; return; }
+  if (_cameraStream) stopRoomCamera(); else await startRoomCamera();
+}
+
+async function startRoomCamera() {
+  _cameraStarting = true;
+  _cameraStopRequested = false;
+  try {
+    _cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+  } catch(e) {
+    alert('Camera access denied: ' + e.message);
+    _cameraStarting = false;
+    return;
+  }
+  if (_cameraStopRequested) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; _cameraStarting = false; return; }
+
+  _cameraVideo = document.createElement('video');   // never inserted into the page — no on-screen preview
+  _cameraVideo.muted = true;
+  _cameraVideo.srcObject = _cameraStream;
+  await _cameraVideo.play();
+  if (_cameraStopRequested) { stopRoomCamera(); _cameraStarting = false; return; }
+
+  _cameraCanvas = document.createElement('canvas');
+  _cameraCanvas.width = 320; _cameraCanvas.height = 240;  // coarse on purpose — presence/hand signals only
+  _cameraCtx = _cameraCanvas.getContext('2d');
+
+  document.getElementById('cameraBadge').style.display = '';
+  document.getElementById('cameraBadge').textContent = '🔴 Camera active — loading vision model…';
+  document.getElementById('cameraToggleBtn').classList.add('danger');
+  dbg('Room camera enabled — ephemeral presence/hand-raise detection only, nothing recorded or sent anywhere');
+
+  let fd, hl;
+  try {
+    const { FilesetResolver, FaceDetector, HandLandmarker } = await import('/vendor/mediapipe/vision_bundle.mjs');
+    const vision = await FilesetResolver.forVisionTasks('/vendor/mediapipe/wasm');
+    fd = await FaceDetector.createFromModelPath(vision,
+      'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite');
+    hl = await HandLandmarker.createFromModelPath(vision,
+      'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task');
+  } catch(e) {
+    dbg('Vision model load failed: ' + e.message);
+    stopRoomCamera();
+    _cameraStarting = false;
+    return;
+  }
+  if (_cameraStopRequested) { fd.close?.(); hl.close?.(); stopRoomCamera(); _cameraStarting = false; return; }
+  _faceDetector = fd; _handLandmarker = hl;
+
+  document.getElementById('cameraBadge').textContent = '🔴 Camera active';
+  // Throttled — a presence signal doesn't need 30-60fps continuous tracking,
+  // and running detection that often would be wasteful for what this is.
+  _cameraDetectInterval = setInterval(detectRoomFrame, 1500);
+  _cameraStarting = false;
+}
+
+function detectRoomFrame() {
+  if (!_cameraStream || !_faceDetector || !_handLandmarker) return;
+  _cameraCtx.drawImage(_cameraVideo, 0, 0, _cameraCanvas.width, _cameraCanvas.height);
+  let faceCount = 0, handRaised = false;
+  try {
+    faceCount = (_faceDetector.detect(_cameraCanvas).detections || []).length;
+    const hands = _handLandmarker.detect(_cameraCanvas).landmarks || [];
+    // Heuristic: a hand is "raised" if its wrist landmark sits in the top
+    // third of frame — well above where hands normally rest while talking.
+    handRaised = hands.some(lm => lm[0] && lm[0].y < 0.33);
+  } catch(e) { dbg('Vision detect error: ' + e.message); }
+  // The canvas frame is overwritten on the next tick and never read again —
+  // only these two derived numbers are kept, in memory, until the next tick.
+  const badge = document.getElementById('cameraBadge');
+  if (badge) badge.textContent = `🔴 Camera active · ${faceCount} in room${handRaised ? ' · ✋ hand raised' : ''}`;
+}
+
+function stopRoomCamera() {
+  if (_cameraDetectInterval) { clearInterval(_cameraDetectInterval); _cameraDetectInterval = null; }
+  if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
+  _faceDetector?.close?.(); _handLandmarker?.close?.();  // release WASM-side resources
+  _cameraVideo = null; _cameraCanvas = null; _cameraCtx = null;
+  _faceDetector = null; _handLandmarker = null;
+  const badge = document.getElementById('cameraBadge');
+  if (badge) badge.style.display = 'none';
+  document.getElementById('cameraToggleBtn')?.classList.remove('danger');
+  dbg('Room camera disabled');
+}
 
 function queueChunk(samples, isMe, nativeRate) {
   // Don't transcribe our own spoken answer — without this the mic picks the
