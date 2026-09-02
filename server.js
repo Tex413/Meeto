@@ -8,7 +8,7 @@ const https = require('https');
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
 // is actually being served (visible in the debug log and at /version).
 const VERSION = '2.1.0';
-const BUILD = 9;
+const BUILD = 10;
 const STARTED = new Date().toISOString();
 
 const PORT = parseInt(process.env.PORT || '7432');
@@ -126,6 +126,21 @@ async function initDb() {
     FOREIGN KEY(doc_id) REFERENCES documents(id)
   )`);
 
+  // Shared cache for researched/fetched info (EIA commodity prices, energy news,
+  // stock quotes now; later the meeting-scoped competitor-research agent reuses
+  // this with scope='meeting' instead of its own table).
+  db.run(`CREATE TABLE IF NOT EXISTS intel_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    meeting_id INTEGER,
+    category TEXT NOT NULL,
+    key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    source TEXT,
+    fetched_at TEXT NOT NULL,
+    expires_at TEXT
+  )`);
+
   // migrations for existing DBs
   const migrate = sql => { try { db.run(sql); } catch(e) {} };
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
@@ -137,6 +152,8 @@ async function initDb() {
   migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
   // Desktop A/V recording: local file under DATA_DIR/recordings, referenced by name.
   migrate('ALTER TABLE meetings ADD COLUMN recording_path TEXT');
+  // BYOK key for EIA.gov Open Data API (market prices) — same shape as the openai/anthropic keys.
+  migrate('ALTER TABLE user_settings ADD COLUMN eia_api_key TEXT');
 
   // Data fix: an Anthropic key (sk-ant-) saved in the OpenAI slot breaks
   // Whisper transcription and confuses provider routing. Normalize it.
@@ -715,6 +732,169 @@ function loadLicense() {
 // except in an unpackaged dev build (DESKTOP_DEV) so the app is testable locally.
 function isLicensed() { return (DESKTOP_MODE && !DESKTOP_DEV) ? !!(_license || loadLicense()) : true; }
 
+// ── Intel ticker: EIA market prices, energy news, stock quotes ──
+// All results land in intel_cache (scope='global' for the standing boardroom
+// ticker; the later meeting-scoped research agent will use scope='meeting').
+function httpsGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const opts = { hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers };
+    const req = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('error', reject); req.end();
+  });
+}
+function cacheGet(scope, category, key) {
+  const row = dbGet(`SELECT payload, expires_at FROM intel_cache WHERE scope=? AND category=? AND key=? ORDER BY fetched_at DESC LIMIT 1`, [scope, category, key]);
+  if (!row) return null;
+  if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
+  try { return JSON.parse(row.payload); } catch(e) { return null; }
+}
+function cacheGetAll(scope, category) {
+  // Latest row per key (rows come back newest-first, so the first hit per key wins).
+  const r = db.exec(`SELECT key, payload, fetched_at FROM intel_cache WHERE scope='${scope}' AND category='${category}' ORDER BY fetched_at DESC`);
+  const out = {};
+  if (!r.length) return out;
+  for (const [key, payload, fetched_at] of r[0].values) {
+    if (out[key]) continue;
+    try { out[key] = { ...JSON.parse(payload), fetchedAt: fetched_at }; } catch(e) {}
+  }
+  return out;
+}
+function cacheSet(scope, category, key, payload, source, ttlMs) {
+  const now = new Date();
+  const expires = ttlMs ? new Date(now.getTime() + ttlMs).toISOString() : null;
+  const stmt = db.prepare('INSERT INTO intel_cache (scope, meeting_id, category, key, payload, source, fetched_at, expires_at) VALUES (?,?,?,?,?,?,?,?)');
+  stmt.run([scope, null, category, key, JSON.stringify(payload), source || null, now.toISOString(), expires]);
+  stmt.free();
+  saveDb();
+}
+function getEiaApiKey(userId) {
+  const s = dbGet(`SELECT eia_api_key FROM user_settings WHERE user_id = ${userId}`);
+  return (s && s.eia_api_key) ? s.eia_api_key : (loadEnvVar('EIA_API_KEY') || 'DEMO_KEY');
+}
+
+// Direct-from-EIA markets (endpoint/series), plus differential-estimate markets computed
+// from them. Ported from a sibling app's CommodityPriceService.cs/CommodityMarkets.cs —
+// same offsets/multipliers, since those were themselves tuned estimates, not derived here.
+const EIA_MARKETS = {
+  WTI:         { name: 'WTI Crude',            category: 'Oil', unit: '$/bbl', eiaEndpoint: 'petroleum/pri/spt',    eiaSeries: 'RWTC' },
+  BRENT:       { name: 'Brent Crude',          category: 'Oil', unit: '$/bbl', eiaEndpoint: 'petroleum/pri/spt',    eiaSeries: 'RBRTE' },
+  HENRY_HUB:   { name: 'Henry Hub',            category: 'Gas', unit: '$/MCF', eiaEndpoint: 'natural-gas/pri/fut',  eiaSeries: 'RNGC1' },
+  WTI_MIDLAND: { name: 'WTI Midland',          category: 'Oil', unit: '$/bbl', estimate: b => b.wti   != null ? b.wti - 1.50 : null },
+  LLS:         { name: 'Louisiana Light Sweet',category: 'Oil', unit: '$/bbl', estimate: b => b.brent != null ? b.brent - 0.50 : (b.wti != null ? b.wti + 1.00 : null) },
+  ANS:         { name: 'ANS (Alaska)',         category: 'Oil', unit: '$/bbl', estimate: b => b.wti   != null ? b.wti + 2.00 : null },
+  MARS:        { name: 'Mars Blend',           category: 'Oil', unit: '$/bbl', estimate: b => b.wti   != null ? b.wti - 4.00 : null },
+  WAHA:        { name: 'Waha Hub',             category: 'Gas', unit: '$/MCF', estimate: b => b.hh    != null ? b.hh * 0.72 : null },
+  PERMIAN_GAS: { name: 'Permian/El Paso',      category: 'Gas', unit: '$/MCF', estimate: b => b.hh    != null ? b.hh * 0.78 : null },
+  SOCAL:       { name: 'SoCal Gas',            category: 'Gas', unit: '$/MCF', estimate: b => b.hh    != null ? b.hh * 0.88 : null },
+  CHICAGO:     { name: 'Chicago Citygate',     category: 'Gas', unit: '$/MCF', estimate: b => b.hh    != null ? b.hh * 1.03 : null },
+  DOMINION:    { name: 'Dominion South',       category: 'Gas', unit: '$/MCF', estimate: b => b.hh    != null ? b.hh * 0.62 : null },
+  NGL_CONWAY:  { name: 'NGL Conway',           category: 'NGL', unit: '$/gal', estimate: b => b.wti   != null ? b.wti * 0.45 / 42 : null },
+  NGL_MB:      { name: 'NGL Mont Belvieu',     category: 'NGL', unit: '$/gal', estimate: b => b.wti   != null ? b.wti * 0.52 / 42 : null },
+};
+const EIA_TICKER_DEFAULTS = ['WTI', 'BRENT', 'HENRY_HUB', 'NGL_CONWAY'];
+
+async function fetchEiaSeries(apiKey, endpoint, series) {
+  const url = `https://api.eia.gov/v2/${endpoint}/data/?api_key=${encodeURIComponent(apiKey)}`
+    + `&frequency=daily&data[]=value&facets[series][]=${series}`
+    + `&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=10`;
+  const { status, body } = await httpsGet(url);
+  if (status !== 200) throw new Error('EIA HTTP ' + status);
+  const rows = JSON.parse(body)?.response?.data || [];
+  for (const row of rows) {
+    if (row.value === null || row.value === undefined) continue;
+    const n = typeof row.value === 'number' ? row.value : parseFloat(row.value);
+    if (!isNaN(n)) return n;
+  }
+  return null;
+}
+
+async function refreshMarketPrices(force, apiKey) {
+  const last = dbGet(`SELECT fetched_at FROM intel_cache WHERE scope='global' AND category='commodity_price' ORDER BY fetched_at DESC LIMIT 1`);
+  if (!force && last && (Date.now() - new Date(last.fetched_at).getTime()) < 4 * 60 * 60 * 1000) return;
+
+  let wti = null, brent = null, hh = null;
+  try { wti = await fetchEiaSeries(apiKey, 'petroleum/pri/spt', 'RWTC'); } catch(e) { log('EIA WTI fetch failed:', e.message); }
+  try { brent = await fetchEiaSeries(apiKey, 'petroleum/pri/spt', 'RBRTE'); } catch(e) { log('EIA Brent fetch failed:', e.message); }
+  try { const raw = await fetchEiaSeries(apiKey, 'natural-gas/pri/fut', 'RNGC1'); hh = raw != null ? raw * 1.02 : null; } catch(e) { log('EIA Henry Hub fetch failed:', e.message); }
+  if (wti == null && brent == null && hh == null) { log('EIA: no prices retrieved, skipping refresh'); return; }
+
+  const base = { wti, brent, hh };
+  const direct = { WTI: wti, BRENT: brent, HENRY_HUB: hh };
+  for (const code of Object.keys(EIA_MARKETS)) {
+    const def = EIA_MARKETS[code];
+    const price = (code in direct) ? direct[code] : (def.estimate ? def.estimate(base) : null);
+    if (price == null) continue;
+    const source = (code in direct) ? 'eia_api' : 'estimate';
+    cacheSet('global', 'commodity_price', code, {
+      code, name: def.name, category: def.category, unit: def.unit,
+      price: Math.round(price * 10000) / 10000, source
+    }, source, null);
+  }
+  log(`EIA market prices refreshed: WTI=${wti} Brent=${brent} HH=${hh}`);
+}
+
+// Energy news: merge a few RSS feeds (regex-based item extraction — simple enough
+// XML that a real parser dependency isn't worth adding for three feeds).
+const ENERGY_NEWS_FEEDS = [
+  'https://www.eia.gov/rss/todayinenergy.xml',
+  'https://oilprice.com/rss/main',
+  'https://www.rigzone.com/news/rss/rigzone_latest.aspx'
+];
+function parseRssItems(xml) {
+  const items = [];
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
+  for (const block of blocks) {
+    const grab = tag => {
+      const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+      return m ? m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, '$1').trim() : '';
+    };
+    const title = grab('title');
+    if (title) items.push({ title, link: grab('link'), date: grab('pubDate') });
+  }
+  return items;
+}
+async function fetchEnergyNews() {
+  const items = [];
+  for (const url of ENERGY_NEWS_FEEDS) {
+    if (items.length >= 10) break;
+    try {
+      const { status, body } = await httpsGet(url, { 'User-Agent': 'Meetintel/1.0 (board-member energy ticker)' });
+      if (status !== 200) continue;
+      items.push(...parseRssItems(body).slice(0, 6));
+    } catch(e) { log('Energy news feed failed:', url, e.message); }
+  }
+  return items.slice(0, 10);
+}
+
+// Stock quotes: Yahoo Finance's unofficial chart endpoint needs no API key, so the
+// BKV badge works out of the box — but it's undocumented and can change/rate-limit
+// without notice. Swapping in a real provider (Finnhub/Bloomberg/etc.) is Phase 4 work.
+async function fetchStockQuote(symbol) {
+  const { status, body } = await httpsGet(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
+    { 'User-Agent': 'Mozilla/5.0' }
+  );
+  if (status !== 200) throw new Error('Yahoo Finance HTTP ' + status);
+  const meta = JSON.parse(body)?.chart?.result?.[0]?.meta;
+  if (!meta || meta.regularMarketPrice == null) throw new Error('No quote data for ' + symbol);
+  const price = meta.regularMarketPrice;
+  const prevClose = meta.previousClose ?? meta.chartPreviousClose ?? null;
+  const change = prevClose != null ? price - prevClose : null;
+  const changePercent = (prevClose) ? (change / prevClose) * 100 : null;
+  return { symbol, price, change, changePercent, asOf: new Date().toISOString() };
+}
+async function refreshStockPrice(symbol) {
+  try {
+    const quote = await fetchStockQuote(symbol);
+    cacheSet('global', 'stock', symbol, quote, 'yahoo_unofficial', null);
+    log(`Stock price refreshed: ${symbol} $${quote.price}`);
+  } catch(e) { log(`Stock price fetch failed for ${symbol}:`, e.message); }
+}
+
 // ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
@@ -1030,13 +1210,14 @@ const server = http.createServer(async (req, res) => {
   // ── user settings ────────────────────────────────────────────
   if (req.method === 'GET' && url === '/user/settings') {
     ensureUserSettings(userId);
-    const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
+    const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key, eia_api_key FROM user_settings WHERE user_id = ${userId}`);
     const ts = trialStatus(user);
     return json(res, 200, {
       provider: s?.ai_provider || 'openai',
       model: s?.ai_model || 'gpt-4o',
       hasAnthropicKey: !!(s?.anthropic_key) || (s?.openai_key || '').startsWith('sk-ant-'),
       hasOpenaiKey: isRealOpenAIKey(s?.openai_key),
+      hasEiaKey: !!(s?.eia_api_key),
       tier: user.tier,
       trialSecondsUsed: user.trial_seconds_used || 0,
       trialSecondsTotal: TRIAL_SECONDS,
@@ -1052,8 +1233,47 @@ const server = http.createServer(async (req, res) => {
     if (body.model) updates.push(`ai_model = '${body.model.replace(/'/g, "''")}'`);
     if (body.anthropicKey) updates.push(`anthropic_key = '${body.anthropicKey.trim().replace(/'/g, "''")}'`);
     if (body.openaiKey) updates.push(`openai_key = '${body.openaiKey.trim().replace(/'/g, "''")}'`);
+    if (body.eiaApiKey) updates.push(`eia_api_key = '${body.eiaApiKey.trim().replace(/'/g, "''")}'`);
     if (updates.length) { db.run(`UPDATE user_settings SET ${updates.join(', ')} WHERE user_id = ${userId}`); saveDb(); }
     return json(res, 200, { ok: true });
+  }
+
+  // ── Intel ticker: EIA market prices, energy news, stock quotes ─
+  if (req.method === 'GET' && url === '/api/market-prices') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const latest = cacheGetAll('global', 'commodity_price');
+    const markets = EIA_TICKER_DEFAULTS.map(code => latest[code] || {
+      code, name: EIA_MARKETS[code].name, unit: EIA_MARKETS[code].unit, price: null
+    });
+    return json(res, 200, { markets });
+  }
+
+  if (req.method === 'POST' && url === '/api/market-prices/refresh') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    try { await refreshMarketPrices(true, getEiaApiKey(userId)); return json(res, 200, { ok: true }); }
+    catch(e) { return json(res, 500, { error: e.message }); }
+  }
+
+  if (req.method === 'GET' && url === '/api/energy-news') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    let cached = cacheGet('global', 'news', 'energy_headlines');
+    if (!cached) {
+      cached = { items: await fetchEnergyNews() };
+      cacheSet('global', 'news', 'energy_headlines', cached, 'rss', 15 * 60 * 1000);
+    }
+    return json(res, 200, cached);
+  }
+
+  if (req.method === 'GET' && url.startsWith('/api/stock-price/')) {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const symbol = decodeURIComponent(url.split('/')[3] || 'BKV').toUpperCase();
+    const cached = cacheGet('global', 'stock', symbol);
+    if (cached) return json(res, 200, cached);
+    try {
+      const quote = await fetchStockQuote(symbol);
+      cacheSet('global', 'stock', symbol, quote, 'yahoo_unofficial', null);
+      return json(res, 200, quote);
+    } catch(e) { return json(res, 500, { error: e.message }); }
   }
 
   if (req.method === 'POST' && url === '/license/activate') {
@@ -1496,6 +1716,12 @@ const serverReady = new Promise(resolve => {
       // Pre-warm the local Whisper model in the background so the first
       // transcription isn't blocked on a cold download/load.
       getWhisper().catch(e => log('Whisper pre-warm failed:', e.message));
+      // Board-room ticker: EIA prices refresh every 4h, BKV stock every 5min.
+      // Background jobs use the env-var/DEMO_KEY default (not tied to a request's user).
+      setTimeout(() => refreshMarketPrices(false, loadEnvVar('EIA_API_KEY') || 'DEMO_KEY').catch(e => log('EIA prewarm failed:', e.message)), 30_000);
+      setInterval(() => refreshMarketPrices(false, loadEnvVar('EIA_API_KEY') || 'DEMO_KEY').catch(e => log('EIA refresh failed:', e.message)), 4 * 60 * 60 * 1000);
+      setTimeout(() => refreshStockPrice('BKV'), 35_000);
+      setInterval(() => refreshStockPrice('BKV'), 5 * 60 * 1000);
     });
   });
 });
