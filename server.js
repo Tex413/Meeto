@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
+const { Worker } = require('worker_threads');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -475,32 +476,54 @@ async function llmComplete(userId, { system, messages, max_tokens = 512 }) {
 }
 
 // ── Local AI models (Transformers.js, fully offline after first download) ──
-// Models are cached in the persistent ./data volume so they download once.
-let _tf = null;
-async function getTransformers() {
-  if (_tf) return _tf;
-  _tf = await import('@xenova/transformers');
-  _tf.env.cacheDir = MODELS_DIR;
-  _tf.env.allowRemoteModels = true;
-  return _tf;
+// Whisper transcription and MiniLM embedding both run in a dedicated worker
+// thread (inference-worker.js) instead of inline here — that CPU-bound work
+// used to block this main thread for the duration of every call, stalling
+// every other route (including the "Meeteor" answer path) behind whatever
+// transcription happened to be in flight. Models are cached in the persistent
+// ./data volume so they download once.
+let _inferenceWorker = null;
+const _inferenceJobs = new Map(); // jobId -> { resolve, reject, timeout }
+let _inferenceJobId = 0;
+
+function spawnInferenceWorker() {
+  const worker = new Worker(path.join(__dirname, 'inference-worker.js'), {
+    workerData: { modelsDir: MODELS_DIR }
+  });
+  worker.on('message', msg => {
+    if (msg.type === 'ready') { log('Inference worker ready (Whisper quantized + embedder warm).'); return; }
+    if (msg.type === 'ready-error') { log('Inference worker failed to warm models:', msg.error); return; }
+    const job = _inferenceJobs.get(msg.id);
+    if (!job) return;
+    _inferenceJobs.delete(msg.id);
+    clearTimeout(job.timeout);
+    if (msg.error) job.reject(new Error(msg.error)); else job.resolve(msg.result);
+  });
+  worker.on('error', e => {
+    log('Inference worker error:', e.message);
+    for (const job of _inferenceJobs.values()) { clearTimeout(job.timeout); job.reject(e); }
+    _inferenceJobs.clear();
+  });
+  worker.on('exit', code => {
+    if (code !== 0) log('Inference worker exited unexpectedly (code ' + code + ') — respawning.');
+    for (const job of _inferenceJobs.values()) { clearTimeout(job.timeout); job.reject(new Error('Inference worker exited')); }
+    _inferenceJobs.clear();
+    _inferenceWorker = spawnInferenceWorker();
+  });
+  return worker;
 }
 
-// ── Local Whisper STT (no API key, no per-use cost) ────────────
-let _whisper = null, _whisperLoading = false;
-async function getWhisper() {
-  if (_whisper) return _whisper;
-  if (_whisperLoading) {
-    await new Promise(resolve => { const t = setInterval(() => { if (!_whisperLoading) { clearInterval(t); resolve(); } }, 200); });
-    return _whisper;
-  }
-  _whisperLoading = true;
-  log('Loading Whisper model (first run downloads ~150 MB, then cached)…');
-  try {
-    const { pipeline } = await getTransformers();
-    _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en');
-    log('Whisper model ready.');
-  } finally { _whisperLoading = false; }
-  return _whisper;
+function runInWorker(type, payload, transferList) {
+  if (!_inferenceWorker) _inferenceWorker = spawnInferenceWorker();
+  return new Promise((resolve, reject) => {
+    const id = ++_inferenceJobId;
+    const timeout = setTimeout(() => {
+      _inferenceJobs.delete(id);
+      reject(new Error('Inference worker timed out'));
+    }, 30_000);
+    _inferenceJobs.set(id, { resolve, reject, timeout });
+    _inferenceWorker.postMessage({ id, type, payload }, transferList || []);
+  });
 }
 
 // ── domain vocabulary correction ("grammar file" for Whisper) ──
@@ -570,28 +593,8 @@ function correctTranscript(text, context) {
   });
 }
 
-// ── RAG / embeddings ───────────────────────────────────────────
-let _embedder = null, _embedderLoading = false;
-async function getEmbedder() {
-  if (_embedder) return _embedder;
-  if (_embedderLoading) {
-    await new Promise(resolve => { const t = setInterval(() => { if (!_embedderLoading) { clearInterval(t); resolve(); } }, 200); });
-    return _embedder;
-  }
-  _embedderLoading = true;
-  log('Loading embedding model…');
-  try {
-    const { pipeline } = await getTransformers();
-    _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { quantized: true });
-    log('Embedding model ready.');
-  } finally { _embedderLoading = false; }
-  return _embedder;
-}
-async function computeEmbedding(text) {
-  const e = await getEmbedder();
-  const out = await e(text, { pooling: 'mean', normalize: true });
-  return Array.from(out.data);
-}
+// ── RAG / embeddings ─────────────────────────────────────────
+// computeEmbedding now runs in the inference worker — see runInWorker('embed', ...).
 function cosineSim(a, b) {
   let dot = 0, ma = 0, mb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; ma += a[i]*a[i]; mb += b[i]*b[i]; }
@@ -1532,18 +1535,21 @@ const server = http.createServer(async (req, res) => {
     const { audio, sampleRate = 16000, context = '' } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
-      const whisper = await getWhisper();
       const buf = Buffer.from(audio, 'base64');
       // slice() copies bytes into a new ArrayBuffer at offset 0 — avoids Float32Array alignment error
       const aligned = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       const audioData = new Float32Array(aligned);
-      const audioSeconds = audioData.length / sampleRate;
-      const result = await whisper(audioData, { sampling_rate: sampleRate });
-      const raw = result.text || '';
+      const sampleCount = audioData.length;         // audioData.buffer is transferred below — save this first
+      const audioSeconds = sampleCount / sampleRate;
+      // Runs in the inference worker (not this thread) — see runInWorker above.
+      // The buffer is transferred (zero-copy), not cloned; audioData itself is
+      // detached and unusable on this thread after this call.
+      const { text: whisperText } = await runInWorker('transcribe', { audioData, sampleRate }, [audioData.buffer]);
+      const raw = whisperText || '';
       // local "grammar file": fuzzy-correct toward the user's domain vocabulary
       const text = correctTranscript(raw, context);
       if (text !== raw) log('Transcribe corrected: ' + JSON.stringify(raw) + ' → ' + JSON.stringify(text));
-      log('Transcribe: ' + audioData.length + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
+      log('Transcribe: ' + sampleCount + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
       // track trial usage
       if (user.tier === 'trial') {
         const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
@@ -1609,7 +1615,7 @@ const server = http.createServer(async (req, res) => {
     ds.free();
     const docId = db.exec('SELECT last_insert_rowid()')[0].values[0][0];
     for (let i = 0; i < chunks.length; i++) {
-      let emb = []; try { emb = await computeEmbedding(chunks[i]); } catch(e) {}
+      let emb = []; try { emb = (await runInWorker('embed', { text: chunks[i] })).embedding; } catch(e) {}
       const cs = db.prepare('INSERT INTO document_chunks (doc_id, chunk_index, text, embedding) VALUES (?,?,?,?)');
       cs.run([docId, i, chunks[i], JSON.stringify(emb)]); cs.free();
     }
@@ -1626,7 +1632,7 @@ const server = http.createServer(async (req, res) => {
     if (!query) return json(res, 200, { chunks: [] });
     const cr = db.exec(`SELECT COUNT(*) FROM document_chunks dc JOIN documents d ON d.id=dc.doc_id WHERE d.user_id=${userId}`);
     if (!cr.length || !cr[0].values[0][0]) return json(res, 200, { chunks: [] });
-    let qEmb; try { qEmb = await computeEmbedding(query); } catch(e) { return json(res, 200, { chunks: [] }); }
+    let qEmb; try { qEmb = (await runInWorker('embed', { text: query })).embedding; } catch(e) { return json(res, 200, { chunks: [] }); }
     const rows = db.exec(`SELECT dc.text, dc.embedding, d.name FROM document_chunks dc JOIN documents d ON d.id=dc.doc_id WHERE d.user_id=${userId}`);
     if (!rows.length) return json(res, 200, { chunks: [] });
     const scored = [];
@@ -1734,9 +1740,9 @@ const serverReady = new Promise(resolve => {
     server.listen(PORT, '0.0.0.0', () => {
       log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
       resolve();
-      // Pre-warm the local Whisper model in the background so the first
-      // transcription isn't blocked on a cold download/load.
-      getWhisper().catch(e => log('Whisper pre-warm failed:', e.message));
+      // Spawn the inference worker now so Whisper/embedder are warm (it logs
+      // 'Inference worker ready' itself) before the first real request needs them.
+      _inferenceWorker = spawnInferenceWorker();
       // Board-room ticker: EIA prices refresh every 4h, BKV stock every 5min.
       // Background jobs use the env-var/DEMO_KEY default (not tied to a request's user).
       setTimeout(() => refreshMarketPrices(false, loadEnvVar('EIA_API_KEY') || 'DEMO_KEY').catch(e => log('EIA prewarm failed:', e.message)), 30_000);
