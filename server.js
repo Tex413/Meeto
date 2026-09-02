@@ -925,6 +925,27 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
+  // ── Local Piper TTS (client-side WASM) — serve our own copy of the library's
+  // browser bundle so the app isn't depending on a CDN for its own JS. The
+  // library itself still fetches the ONNX Runtime Web WASM binaries from
+  // cdnjs and voice model weights from HuggingFace at runtime — same
+  // "needs internet once, then cached" shape Whisper already has.
+  if (req.method === 'GET' && url.startsWith('/vendor/piper/')) {
+    const rel = decodeURIComponent(url.slice('/vendor/piper/'.length));
+    if (rel.includes('..')) { res.writeHead(400); return res.end('bad path'); }
+    const filePath = path.join(__dirname, 'node_modules', '@mintplex-labs', 'piper-tts-web', 'dist', rel);
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = ext === '.js' ? 'application/javascript; charset=utf-8'
+      : ext === '.json' ? 'application/json; charset=utf-8'
+      : ext === '.wasm' ? 'application/wasm'
+      : 'application/octet-stream';
+    try {
+      const data = fs.readFileSync(filePath);
+      res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=86400' });
+      return res.end(data);
+    } catch(e) { res.writeHead(404); return res.end('not found'); }
+  }
+
   if (req.method === 'GET' && url === '/auth/status') {
     const userId = checkToken(req);
     return json(res, 200, { authenticated: !!userId });

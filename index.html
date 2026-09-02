@@ -1656,6 +1656,7 @@ async function init() {
   initLocalControlChannel();
   initIntelTicker();
   renderWakeBadge();
+  prewarmPiper();
 
   dbg('━━ Meetintel v' + APP_BUILD + ' ━━');
   const bb = document.getElementById('buildBadge');
@@ -2521,41 +2522,45 @@ Answer in 1-3 short sentences, conversationally — this will be read aloud, so 
   }
 }
 
-// Speaks the answer via the browser's built-in TTS and drives the presence
-// orb's "speaking" state (defined in Phase 1, unused until now).
+// Speaks the answer via local Piper TTS (WASM, runs on-device — no cloud API,
+// no server round-trip) and drives the presence orb's "speaking" state
+// (defined in Phase 1, unused until now). Replaced the browser's built-in
+// speechSynthesis, which sounded mechanical — Piper is meaningfully more
+// natural while staying local/free. Runs on CPU (the user chose this over a
+// GPU-accelerated path, which would've needed a Python/CUDA subprocess).
+const PIPER_VOICE = 'en_US-ryan-high';
 let _speaking = false;
-let _speakKeepalive = null;
-function speakAnswer(text) {
-  if (!('speechSynthesis' in window)) {
-    dbg('speechSynthesis not available in this browser/environment — cannot speak answer');
-    setPresenceState(listening ? 'listening' : 'idle');
-    return;
-  }
-  const synth = window.speechSynthesis;
-  synth.cancel();
-  // Chrome silently drops an utterance if speak() is called in the same tick
-  // right after cancel() — defer a beat so the cancel actually lands first.
-  setTimeout(() => {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.onstart = () => {
-      _speaking = true;
-      setPresenceState('speaking');
-      // Chrome has a long-standing bug where speech silently halts after
-      // ~15s unless paused/resumed periodically — harmless no-op for short
-      // answers, but keeps longer ones from dying mid-sentence.
-      _speakKeepalive = setInterval(() => { if (synth.speaking) { synth.pause(); synth.resume(); } }, 10000);
-    };
+let _piperModule = null;
+async function getPiper() {
+  if (!_piperModule) _piperModule = await import('/vendor/piper/piper-tts-web.js');
+  return _piperModule;
+}
+// Pre-warm: downloads the voice model once (a few MB, cached by the library
+// in OPFS) so the first real question doesn't pay that cost. Fire-and-forget.
+function prewarmPiper() {
+  getPiper().then(piper => piper.download(PIPER_VOICE, p => {
+    if (p.total) dbg('Piper voice download: ' + Math.round(p.loaded * 100 / p.total) + '% — ' + p.url);
+  })).catch(e => dbg('Piper pre-warm failed: ' + e.message));
+}
+async function speakAnswer(text) {
+  try {
+    const piper = await getPiper();
+    const wav = await piper.predict({ text, voiceId: PIPER_VOICE });
+    const audio = new Audio(URL.createObjectURL(wav));
+    audio.onplay = () => { _speaking = true; setPresenceState('speaking'); };
     const done = (why) => {
-      if (_speakKeepalive) { clearInterval(_speakKeepalive); _speakKeepalive = null; }
       _speaking = false;
-      dbg('speechSynthesis ' + why);
+      dbg('Piper TTS ' + why);
+      URL.revokeObjectURL(audio.src);
       setPresenceState(listening ? 'listening' : 'idle');
     };
-    utter.onend = () => done('finished');
-    utter.onerror = (e) => done('error: ' + (e.error || 'unknown'));
-    dbg('speechSynthesis: speaking ' + text.length + ' chars, voices available=' + synth.getVoices().length);
-    synth.speak(utter);
-  }, 60);
+    audio.onended = () => done('finished');
+    audio.onerror = () => done('playback error');
+    await audio.play();
+  } catch(e) {
+    dbg('Piper TTS failed: ' + e.message);
+    setPresenceState(listening ? 'listening' : 'idle');
+  }
 }
 
 // LLM refine pass over finalized turns. Layered on top of the local correction.
