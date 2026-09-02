@@ -9,7 +9,7 @@ const { Worker } = require('worker_threads');
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
 // is actually being served (visible in the debug log and at /version).
 const VERSION = '2.1.0';
-const BUILD = 15;
+const BUILD = 16;
 const STARTED = new Date().toISOString();
 
 const PORT = parseInt(process.env.PORT || '7432');
