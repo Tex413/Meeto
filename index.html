@@ -2395,6 +2395,15 @@ async function maybeAnalyze() {
     }
   } catch(e) { /* non-fatal */ }
 
+  // Live boardroom ticker (BKV stock + EIA commodity prices) — cache-only read,
+  // no network round-trip here, so this doesn't slow down the analysis cycle.
+  let intelContext = '';
+  try {
+    const ir = await fetch('/api/intel-snapshot');
+    const id = await ir.json();
+    if (id.text) intelContext = '\n\nLIVE MARKET DATA (current as of ' + id.asOf + ' — use these exact figures if asked about BKV stock or commodity prices, do not estimate):\n' + id.text;
+  } catch(e) { /* non-fatal */ }
+
   const tersePrompt = terseLevel === 1
     ? 'TERSE: title only, body = one phrase or key term. No sentences.'
     : terseLevel === 2
@@ -2428,7 +2437,7 @@ FACT-CHECK MODE: You are reviewing STATEMENTS MADE BY THE USER (the consultant).
 
   const system = `You are a real-time meeting intelligence assistant surfacing insight cards during a live technical conversation.${factCheckAddendum}
 
-${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${existingBlock}
+${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${intelContext}${existingBlock}
 
 RULES:
 - Only generate cards for topics actually mentioned in the recent transcript

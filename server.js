@@ -1264,6 +1264,27 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, cached);
   }
 
+  // Compact, cache-only snapshot for the insight-card LLM prompt — no network
+  // call here, just formats whatever's already in intel_cache, so it's cheap
+  // to call on every analysis cycle. This is what lets the board member give a
+  // real, current-as-of BKV price/commodity numbers instead of guessing.
+  if (req.method === 'GET' && url === '/api/intel-snapshot') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const markets = cacheGetAll('global', 'commodity_price');
+    const parts = [];
+    const bkv = cacheGet('global', 'stock', 'BKV');
+    if (bkv && bkv.price != null) {
+      const pct = bkv.changePercent;
+      parts.push(`BKV Corp stock $${bkv.price.toFixed(2)}${pct != null ? ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)' : ''}`);
+    }
+    for (const code of EIA_TICKER_DEFAULTS) {
+      const m = markets[code];
+      if (!m || m.price == null) continue;
+      parts.push(`${m.name} $${Number(m.price).toFixed(2)}${m.unit ? '/' + m.unit.replace('$/', '') : ''}`);
+    }
+    return json(res, 200, { text: parts.join(' · '), asOf: new Date().toISOString() });
+  }
+
   if (req.method === 'GET' && url.startsWith('/api/stock-price/')) {
     if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const symbol = decodeURIComponent(url.split('/')[3] || 'BKV').toUpperCase();
