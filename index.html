@@ -1178,6 +1178,7 @@ async function init() {
   loadDocuments();
   populateMicList();
   stopViz();
+  initLocalControlChannel();
 
   // auto-open settings if no API key configured
   if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
@@ -1474,6 +1475,17 @@ function stopListen() {
   document.getElementById('countdown').textContent = '';
 }
 
+// Remote start/stop from a local, same-machine controller (Stream Deck tile, MCP tool, etc.) via
+// the server's /api/local/events SSE channel - see /api/local/start-recording|stop-recording in
+// server.js. Guards against double-start/double-stop since the SSE event and a manual button
+// click could race.
+function initLocalControlChannel() {
+  const source = new EventSource('/api/local/events');
+  source.addEventListener('start-recording', () => { if (!listening) startListen(); });
+  source.addEventListener('stop-recording', () => { if (listening) stopListen(); });
+  source.onerror = () => dbg('Local control channel disconnected - EventSource will auto-retry');
+}
+
 function startViz() {
   if (!analyserNode) return;
   const canvas = document.getElementById('micViz');
@@ -1564,6 +1576,25 @@ async function resampleTo16k(samples, fromRate) {
   return rendered.getChannelData(0);
 }
 
+// Whisper is prone to hallucinating a short phrase repeated many times over when fed short or
+// ambiguous audio (a well-documented failure mode, distinct from the RMS/VAD silence gate in
+// queueChunk - that filters audio before sending, this catches garbage that still comes back).
+// Real speech essentially never repeats the same 1-4 word phrase back-to-back 5+ times.
+function isHallucinatedRepetition(text) {
+  const words = text.trim().split(/\s+/);
+  if (words.length < 6) return false;
+  for (let n = 1; n <= 4; n++) {
+    let run = 1, maxRun = 1;
+    for (let i = n; i + n <= words.length; i += n) {
+      const a = words.slice(i - n, i).join(' ').toLowerCase();
+      const b = words.slice(i, i + n).join(' ').toLowerCase();
+      if (a === b) { run++; maxRun = Math.max(maxRun, run); } else { run = 1; }
+    }
+    if (maxRun >= 5) return true;
+  }
+  return false;
+}
+
 async function processChunkQueue() {
   _chunkProcessing = true;
   while (_chunkQueue.length) {
@@ -1585,9 +1616,13 @@ async function processChunkQueue() {
       dbg('Whisper result: ' + JSON.stringify(text));
       const clean = (text || '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
       if (wordCount(clean) >= 1) {
-        transcript_final += clean + ' ';
-        pushTurn(clean, isMe);
-        renderTranscript();
+        if (isHallucinatedRepetition(clean)) {
+          dbg('Discarded likely Whisper hallucination (repeated phrase): ' + JSON.stringify(clean.slice(0, 80)));
+        } else {
+          transcript_final += clean + ' ';
+          pushTurn(clean, isMe);
+          renderTranscript();
+        }
       }
     } catch(e) { console.error('[transcribe] error:', e); }
   }

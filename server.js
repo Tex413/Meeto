@@ -139,6 +139,22 @@ function dbGet(sql, params = []) {
 const sessions = new Map(); // token → { userId, expiry }
 const SESSION_MS = 8 * 60 * 60 * 1000;
 
+// ── local-only recording control (Stream Deck / MCP) ─────────────
+// Deliberately unauthenticated: this only ever lets a process on the SAME machine tell an
+// already-open, already-logged-in browser tab to start/stop listening. It is not reachable from
+// Meeto's hosted multi-user service - isLoopback() is the trust boundary, not a session cookie.
+const localEventClients = new Set();
+function isLoopback(req) {
+  const addr = req.socket.remoteAddress || '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+function broadcastLocalEvent(eventName) {
+  const payload = `event: ${eventName}\ndata: {}\n\n`;
+  for (const clientRes of localEventClients) {
+    try { clientRes.write(payload); } catch (e) { localEventClients.delete(clientRes); }
+  }
+}
+
 function hashPwd(pwd) {
   return crypto.createHash('sha256').update('meeto-v1:' + pwd).digest('hex');
 }
@@ -566,6 +582,36 @@ const server = http.createServer(async (req, res) => {
       } catch(e) { return json(res, 400, { error: e.message }); }
     }
     return json(res, 200, { received: true });
+  }
+
+  // ── local-only recording control (Stream Deck / MCP) - public, but loopback-only ─────
+  if (url === '/api/local/events' && req.method === 'GET') {
+    if (!isLoopback(req)) { res.writeHead(403); return res.end('forbidden'); }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.write(': connected\n\n');
+    localEventClients.add(res);
+    req.on('close', () => localEventClients.delete(res));
+    return;
+  }
+
+  if (url === '/api/local/start-recording' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    broadcastLocalEvent('start-recording');
+    // listeners tells the caller whether any open tab actually received this - the broadcast
+    // is fire-and-forget, so `ok: true` alone can't distinguish "a tab is listening" from
+    // "the server is up but nothing is open to hear it".
+    return json(res, 200, { ok: true, listeners: localEventClients.size });
+  }
+
+  if (url === '/api/local/stop-recording' && req.method === 'POST') {
+    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    broadcastLocalEvent('stop-recording');
+    return json(res, 200, { ok: true, listeners: localEventClients.size });
   }
 
   // ── main app ─────────────────────────────────────────────────
