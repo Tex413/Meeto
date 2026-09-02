@@ -749,8 +749,12 @@ function httpsGet(url, headers = {}) {
     req.on('error', reject); req.end();
   });
 }
-function cacheGet(scope, category, key) {
-  const row = dbGet(`SELECT payload, expires_at FROM intel_cache WHERE scope=? AND category=? AND key=? ORDER BY fetched_at DESC LIMIT 1`, [scope, category, key]);
+function cacheGet(scope, category, key, meetingId) {
+  const params = [scope, category, key];
+  let sql = `SELECT payload, expires_at FROM intel_cache WHERE scope=? AND category=? AND key=?`;
+  if (meetingId != null) { sql += ` AND meeting_id=?`; params.push(meetingId); }
+  sql += ` ORDER BY fetched_at DESC LIMIT 1`;
+  const row = dbGet(sql, params);
   if (!row) return null;
   if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
   try { return JSON.parse(row.payload); } catch(e) { return null; }
@@ -766,11 +770,24 @@ function cacheGetAll(scope, category) {
   }
   return out;
 }
-function cacheSet(scope, category, key, payload, source, ttlMs) {
+// Same latest-per-key dedup as cacheGetAll, but filtered to one meeting — used
+// for scope='meeting' data (competitor research etc.), where the same `key`
+// (e.g. a company name) can legitimately exist across different meetings.
+function cacheGetAllForMeeting(meetingId, category) {
+  const r = db.exec(`SELECT key, payload, fetched_at FROM intel_cache WHERE scope='meeting' AND meeting_id=${parseInt(meetingId)} AND category='${category.replace(/'/g, "''")}' ORDER BY fetched_at DESC`);
+  const out = {};
+  if (!r.length) return out;
+  for (const [key, payload, fetched_at] of r[0].values) {
+    if (out[key]) continue;
+    try { out[key] = { ...JSON.parse(payload), fetchedAt: fetched_at }; } catch(e) {}
+  }
+  return out;
+}
+function cacheSet(scope, category, key, payload, source, ttlMs, meetingId) {
   const now = new Date();
   const expires = ttlMs ? new Date(now.getTime() + ttlMs).toISOString() : null;
   const stmt = db.prepare('INSERT INTO intel_cache (scope, meeting_id, category, key, payload, source, fetched_at, expires_at) VALUES (?,?,?,?,?,?,?,?)');
-  stmt.run([scope, null, category, key, JSON.stringify(payload), source || null, now.toISOString(), expires]);
+  stmt.run([scope, meetingId ?? null, category, key, JSON.stringify(payload), source || null, now.toISOString(), expires]);
   stmt.free();
   saveDb();
 }
@@ -1298,6 +1315,41 @@ const server = http.createServer(async (req, res) => {
       cacheSet('global', 'stock', symbol, quote, 'yahoo_unofficial', null);
       return json(res, 200, quote);
     } catch(e) { return json(res, 500, { error: e.message }); }
+  }
+
+  // ── Meeting-scoped research cache — generic read/write over intel_cache with
+  // scope='meeting'. No LLM calls happen here; the client does those itself via
+  // the existing /proxy route (same pattern maybeAnalyze/answerDirectQuestion
+  // already use) and just persists results here. Currently used for the
+  // competitor-research orchestrator (category='competitor'), but generic by
+  // design — this table was built in Phase 1 to hold whatever gets researched.
+  if (req.method === 'GET' && url === '/api/meeting-cache') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const q = new URL(req.url, 'http://x').searchParams;
+    const meetingId = parseInt(q.get('meetingId') || '0');
+    const category = q.get('category') || '';
+    const key = q.get('key') || '';
+    if (!meetingId || !category || !key) return json(res, 400, { error: 'meetingId, category, and key are required' });
+    const cached = cacheGet('meeting', category, key, meetingId);
+    return json(res, 200, cached ? { cached: true, ...cached } : { cached: false });
+  }
+
+  if (req.method === 'GET' && url === '/api/meeting-cache/all') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const q = new URL(req.url, 'http://x').searchParams;
+    const meetingId = parseInt(q.get('meetingId') || '0');
+    const category = q.get('category') || '';
+    if (!meetingId || !category) return json(res, 400, { error: 'meetingId and category are required' });
+    return json(res, 200, { entries: cacheGetAllForMeeting(meetingId, category) });
+  }
+
+  if (req.method === 'POST' && url === '/api/meeting-cache') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const body = JSON.parse(await readBody(req));
+    const { meetingId, category, key, payload, ttlMs } = body;
+    if (!meetingId || !category || !key || payload === undefined) return json(res, 400, { error: 'meetingId, category, key, and payload are required' });
+    cacheSet('meeting', category, key, payload, 'web_search', ttlMs || null, parseInt(meetingId));
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/license/activate') {
