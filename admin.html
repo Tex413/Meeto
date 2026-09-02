@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meeto Admin</title>
+<title>Meetintel Admin</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -145,7 +145,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div class="sidebar-logo">
       <div class="sidebar-logo-row">
         <span class="sidebar-logo-icon">☄️</span>
-        <span class="sidebar-logo-name">Meeto</span>
+        <span class="sidebar-logo-name">Meetintel</span>
       </div>
       <div style="margin-top:6px"><span class="sidebar-badge">Admin</span></div>
     </div>
@@ -199,7 +199,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <!-- Licenses -->
     <div class="page" id="page-licenses">
       <h2>License Keys</h2>
-      <p class="page-sub">Generate and verify Meeto license keys.</p>
+      <p class="page-sub">Generate and verify Meetintel license keys.</p>
 
       <div class="section">
         <div class="section-title">Generate Key</div>
@@ -225,7 +225,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <label for="verifyInput">License Key</label>
         <div class="row" style="align-items:flex-start">
           <div>
-            <input type="text" id="verifyInput" placeholder="MEETO-..." style="margin-bottom:0" />
+            <input type="text" id="verifyInput" placeholder="MEETINTEL-..." style="margin-bottom:0" />
           </div>
           <div class="btn-wrap" style="margin-bottom:0">
             <button class="btn btn-secondary" onclick="verifyKey()">Verify</button>
@@ -240,6 +240,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <h2>Users</h2>
       <p class="page-sub">All registered accounts. Grant licenses or view trial status.</p>
       <div id="usersTable">Loading…</div>
+      <div id="resetLinksSection" style="margin-top:24px;display:none">
+        <div class="section-title" style="margin-bottom:10px">Pending Password Resets <span style="font-size:11px;font-weight:400;color:var(--text2)">(no SMTP configured — copy &amp; send these manually)</span></div>
+        <div id="resetLinksList"></div>
+      </div>
     </div>
 
     <!-- Stripe -->
@@ -259,7 +263,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <label for="webhookInput">Webhook Secret (whsec_...)</label>
         <input type="password" id="webhookInput" placeholder="whsec_..." />
         <p style="font-size:12px; color:var(--text3); margin-bottom:16px;">
-          Set your Stripe webhook endpoint to <code style="background:var(--bg); padding:2px 5px; border-radius:4px;">http://localhost:7432/stripe/webhook</code><br>
+          Set your Stripe webhook endpoint to <code style="background:var(--bg); padding:2px 5px; border-radius:4px;">https://meetintel.io/stripe/webhook</code><br>
           Enable events: <code style="background:var(--bg); padding:2px 5px; border-radius:4px;">checkout.session.completed</code>
         </p>
         <button class="btn btn-primary" onclick="saveStripe()">Save Stripe config</button>
@@ -284,7 +288,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <div class="section">
         <div class="section-title">Danger Zone</div>
         <p style="font-size:13px; color:var(--text2); margin-bottom:16px;">Actions here cannot be undone.</p>
-        <button class="btn btn-secondary" style="color:var(--red); border-color:rgba(248,113,113,0.2);" onclick="confirmLogout()">Sign out of Meeto</button>
+        <button class="btn btn-secondary" style="color:var(--red); border-color:rgba(248,113,113,0.2);" onclick="confirmLogout()">Sign out of Meetintel</button>
       </div>
     </div>
 
@@ -303,7 +307,7 @@ function showPage(name, btn) {
   btn.classList.add('active');
   if (name === 'overview') loadStats();
   if (name === 'stripe') loadStripeStatus();
-  if (name === 'users') loadUsers();
+  if (name === 'users') { loadUsers(); loadResetLinks(); }
 }
 
 function toast(msg, dur = 2500) {
@@ -412,7 +416,7 @@ async function saveLicenseSecret() {
 }
 
 function confirmLogout() {
-  if (!confirm('Sign out of Meeto?')) return;
+  if (!confirm('Sign out of Meetintel?')) return;
   fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/');
 }
 
@@ -436,10 +440,36 @@ async function loadUsers() {
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${u.createdAt?new Date(u.createdAt).toLocaleDateString():''}</td>
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
           ${u.tier!=='paid'?`<button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="grantLicense(${u.id},'lifetime')">Grant lifetime</button>`:''}
+          <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px;margin-left:4px" onclick="resetPassword(${u.id},'${u.email}')">Reset pwd</button>
         </td>
       </tr>`).join('')}
     </tbody>
   </table>`;
+}
+
+async function resetPassword(userId, email) {
+  const newPassword = prompt(`New password for ${email} (min 6 chars):`);
+  if (!newPassword) return;
+  if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+  const r = await fetch('/admin/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ targetUserId: userId, newPassword }) }).then(r=>r.json());
+  if (r.ok) toast('Password reset for ' + email);
+  else toast('Error: ' + r.error);
+}
+
+async function loadResetLinks() {
+  const links = await fetch('/admin/reset-links').then(r => r.json()).catch(() => []);
+  const section = document.getElementById('resetLinksSection');
+  const list = document.getElementById('resetLinksList');
+  if (!links.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  list.innerHTML = links.map(l => `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;">
+      <strong>${l.email}</strong> — expires ${new Date(l.expires).toLocaleTimeString()}
+      <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+        <code style="flex:1;font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.url}</code>
+        <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="navigator.clipboard.writeText('${l.url}');toast('Copied!')">Copy</button>
+      </div>
+    </div>`).join('');
 }
 
 async function grantLicense(userId, type) {

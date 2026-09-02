@@ -4,13 +4,28 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 
+// ── Version / build ──────────────────────────────────────────
+// Bump BUILD on every deploy so you can confirm in the UI that fresh code
+// is actually being served (visible in the debug log and at /version).
+const VERSION = '2.1.0';
+const BUILD = 9;
+const STARTED = new Date().toISOString();
+
 const PORT = parseInt(process.env.PORT || '7432');
-const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const IS_HTTPS = APP_URL.startsWith('https://');
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const IS_HTTPS = PUBLIC_URL.startsWith('https://');
+// Desktop (Electron) mode: single local user, no login/registration. Set by main.js.
+// When off (hosted/web demo), all the multi-user/auth behavior is unchanged.
+const DESKTOP_MODE = process.env.DESKTOP_MODE === '1';
+// Unpackaged dev build (set by main.js): bypass license gates for local testing.
+const DESKTOP_DEV = process.env.DESKTOP_DEV === '1';
+let LOCAL_USER_ID = 1; // resolved during initDb when DESKTOP_MODE is on
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'meeto.sqlite');
+const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
 const DOCS_DIR = path.join(DATA_DIR, 'documents');
-const LOG_FILE = path.join(DATA_DIR, 'meeto.log');
+const MODELS_DIR = path.join(DATA_DIR, 'models');
+const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
+const LOG_FILE = path.join(DATA_DIR, 'meetintel.log');
 const ENV_FILE = path.join(DATA_DIR, '.env');
 
 const TRIAL_SECONDS = 20 * 60;
@@ -19,6 +34,8 @@ const TRIAL_DELETE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
+if (!fs.existsSync(MODELS_DIR)) fs.mkdirSync(MODELS_DIR, { recursive: true });
+if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
 
 function log(...args) {
   const line = new Date().toISOString() + ' ' + args.join(' ');
@@ -114,6 +131,33 @@ async function initDb() {
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE documents ADD COLUMN user_id INTEGER DEFAULT 1');
   migrate('ALTER TABLE meetings ADD COLUMN todos TEXT');
+  migrate('ALTER TABLE cards ADD COLUMN pinned INTEGER DEFAULT 0');
+  migrate('ALTER TABLE cards ADD COLUMN deleted INTEGER DEFAULT 0');
+  migrate('ALTER TABLE users ADD COLUMN reset_token TEXT');
+  migrate('ALTER TABLE users ADD COLUMN reset_expires TEXT');
+  // Desktop A/V recording: local file under DATA_DIR/recordings, referenced by name.
+  migrate('ALTER TABLE meetings ADD COLUMN recording_path TEXT');
+
+  // Data fix: an Anthropic key (sk-ant-) saved in the OpenAI slot breaks
+  // Whisper transcription and confuses provider routing. Normalize it.
+  migrate(`UPDATE user_settings SET anthropic_key = openai_key WHERE (anthropic_key IS NULL OR anthropic_key = '') AND openai_key LIKE 'sk-ant-%'`);
+  migrate(`UPDATE user_settings SET ai_provider = 'anthropic' WHERE ai_provider = 'openai' AND anthropic_key LIKE 'sk-ant-%'`);
+  migrate(`UPDATE user_settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_provider = 'anthropic' AND (ai_model IS NULL OR ai_model LIKE 'gpt%' OR ai_model LIKE 'o1%' OR ai_model LIKE 'o3%')`);
+  migrate(`UPDATE user_settings SET openai_key = NULL WHERE openai_key LIKE 'sk-ant-%'`);
+
+  // Desktop mode: ensure a single local user exists and is fully unlocked.
+  // (Phase 2 will gate this behind an Ed25519 license; for now it's open so the
+  // app is usable while the desktop build comes together.)
+  if (DESKTOP_MODE) {
+    let u = dbGet(`SELECT id FROM users WHERE email = 'local@desktop'`);
+    if (!u) {
+      db.run(`INSERT INTO users (email, pwd_hash, created_at, tier) VALUES ('local@desktop', '-', '${new Date().toISOString()}', 'paid')`);
+      u = dbGet(`SELECT id FROM users WHERE email = 'local@desktop'`);
+    }
+    LOCAL_USER_ID = u.id;
+    loadLicense();
+    log('Desktop mode: single local user id', LOCAL_USER_ID, '— licensed:', !!_license);
+  }
 
   saveDb();
   log('Database ready:', DB_FILE);
@@ -164,7 +208,8 @@ function makeToken(userId) {
   return t;
 }
 function checkToken(req) {
-  const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
+  if (DESKTOP_MODE) return LOCAL_USER_ID;  // single local user — no auth in the desktop app
+  const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
   const token = m ? m[1] : (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return null;
   const s = sessions.get(token);
@@ -172,13 +217,22 @@ function checkToken(req) {
   s.expiry = Date.now() + SESSION_MS;
   return s.userId;
 }
-function setSessionCookie(res, token) {
-  const secure = IS_HTTPS ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `meeto_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
+// Secure flag must follow the ACTUAL request protocol, not PUBLIC_URL.
+// Behind Cloudflare the request arrives with X-Forwarded-Proto: https; a
+// direct http://localhost hit has none. Marking the cookie Secure on a plain
+// HTTP request makes the browser silently drop it → login bounces forever.
+function reqIsHttps(req) {
+  const xfp = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (xfp) return xfp === 'https';
+  return !!(req.connection && req.connection.encrypted);
 }
-function clearSessionCookie(res) {
-  const secure = IS_HTTPS ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `meeto_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
+function setSessionCookie(res, token, req) {
+  const secure = reqIsHttps(req) ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `meetintel_sid=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${8 * 3600}${secure}`);
+}
+function clearSessionCookie(res, req) {
+  const secure = reqIsHttps(req) ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `meetintel_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`);
 }
 
 // ── trial helpers ──────────────────────────────────────────────
@@ -229,6 +283,31 @@ function writeEnvVar(varName, value) {
   fs.writeFileSync(ENV_FILE, c, 'utf8');
 }
 
+// ── email / password reset ─────────────────────────────────────
+async function sendResetEmail(toEmail, token) {
+  const url = `${PUBLIC_URL}/reset?token=${token}`;
+  const smtpHost = loadEnvVar('SMTP_HOST');
+  if (smtpHost) {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: parseInt(loadEnvVar('SMTP_PORT') || '587'),
+      secure: loadEnvVar('SMTP_PORT') === '465',
+      auth: { user: loadEnvVar('SMTP_USER'), pass: loadEnvVar('SMTP_PASS') }
+    });
+    await transporter.sendMail({
+      from: loadEnvVar('SMTP_FROM') || 'noreply@meetintel.io',
+      to: toEmail,
+      subject: 'Reset your Meetintel password',
+      text: `Click this link to reset your password (expires in 1 hour):\n\n${url}\n\nIf you didn't request this, ignore this email.`,
+      html: `<p>Click below to reset your Meetintel password (expires in 1 hour):</p><p><a href="${url}">${url}</a></p><p style="color:#888;font-size:12px">If you didn't request this, ignore this email.</p>`
+    });
+    return { emailed: true };
+  }
+  log('RESET LINK (no SMTP):', url);
+  return { emailed: false, url };
+}
+
 // ── request helpers ────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -263,7 +342,7 @@ function float32ToWav(samples, sampleRate) {
 
 function openaiWhisper(wavBuffer, openaiKey) {
   return new Promise((resolve, reject) => {
-    const boundary = 'meeto-' + Date.now();
+    const boundary = 'meetintel-' + Date.now();
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`),
       wavBuffer,
@@ -279,10 +358,21 @@ function openaiWhisper(wavBuffer, openaiKey) {
     };
     const req = https.request(opts, res => {
       let d = ''; res.on('data', c => d += c);
-      res.on('end', () => { try { resolve(JSON.parse(d).text || ''); } catch(e) { reject(new Error(d)); } });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          if (parsed.error) return reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+          resolve(parsed.text || '');
+        } catch(e) { reject(new Error(d.substring(0, 200))); }
+      });
     });
     req.on('error', reject); req.write(body); req.end();
   });
+}
+
+// True only for a usable OpenAI key (not an Anthropic key parked in the slot)
+function isRealOpenAIKey(key) {
+  return !!key && key.startsWith('sk-') && !key.startsWith('sk-ant-');
 }
 
 // ── AI proxy (Anthropic + OpenAI, unified Anthropic response format) ──
@@ -322,17 +412,144 @@ function proxyOpenAI(anthropicBody, openaiKey, model) {
       res.on('end', () => {
         try {
           const oai = JSON.parse(d);
+          if (oai.error) {
+            resolve({ status: 400, body: JSON.stringify({ error: oai.error.message || JSON.stringify(oai.error) }) });
+            return;
+          }
           const text = oai.choices?.[0]?.message?.content || '';
           const anthropicRes = {
             id: oai.id || 'openai', type: 'message', role: 'assistant',
             content: [{ type: 'text', text }], model: oai.model || model,
             usage: { input_tokens: oai.usage?.prompt_tokens || 0, output_tokens: oai.usage?.completion_tokens || 0 }
           };
-          resolve({ status: oai.error ? 400 : 200, body: JSON.stringify(anthropicRes) });
+          resolve({ status: 200, body: JSON.stringify(anthropicRes) });
         } catch(e) { reject(e); }
       });
     });
     r.on('error', reject); r.write(payload); r.end();
+  });
+}
+
+// Run one LLM completion through the user's configured provider/key.
+// Returns assistant text, or null on any failure (caller falls back gracefully).
+// Forces a cheap model for cost control unless the user already runs a cheap one.
+async function llmComplete(userId, { system, messages, max_tokens = 512 }) {
+  const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
+  if (!s) return null;
+  const provider = s.ai_provider || 'openai';
+  const body = JSON.stringify({ system, messages, max_tokens });
+  const CHEAP_ANTHROPIC = 'claude-haiku-4-5-20251001', CHEAP_OPENAI = 'gpt-4o-mini';
+  try {
+    const useAnthropic = provider === 'anthropic' || (s.openai_key || '').startsWith('sk-ant-');
+    if (useAnthropic) {
+      const key = provider === 'anthropic' ? s.anthropic_key : s.openai_key;
+      if (!key) return null;
+      const parsed = JSON.parse(body); parsed.model = CHEAP_ANTHROPIC;
+      const r = await proxyAnthropic(JSON.stringify(parsed), key);
+      if (r.status !== 200) return null;
+      return JSON.parse(r.body)?.content?.[0]?.text || null;
+    } else {
+      if (!s.openai_key) return null;
+      const r = await proxyOpenAI(body, s.openai_key, CHEAP_OPENAI);
+      if (r.status !== 200) return null;
+      return JSON.parse(r.body)?.content?.[0]?.text || null;
+    }
+  } catch { return null; }
+}
+
+// ── Local AI models (Transformers.js, fully offline after first download) ──
+// Models are cached in the persistent ./data volume so they download once.
+let _tf = null;
+async function getTransformers() {
+  if (_tf) return _tf;
+  _tf = await import('@xenova/transformers');
+  _tf.env.cacheDir = MODELS_DIR;
+  _tf.env.allowRemoteModels = true;
+  return _tf;
+}
+
+// ── Local Whisper STT (no API key, no per-use cost) ────────────
+let _whisper = null, _whisperLoading = false;
+async function getWhisper() {
+  if (_whisper) return _whisper;
+  if (_whisperLoading) {
+    await new Promise(resolve => { const t = setInterval(() => { if (!_whisperLoading) { clearInterval(t); resolve(); } }, 200); });
+    return _whisper;
+  }
+  _whisperLoading = true;
+  log('Loading Whisper model (first run downloads ~150 MB, then cached)…');
+  try {
+    const { pipeline } = await getTransformers();
+    _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en');
+    log('Whisper model ready.');
+  } finally { _whisperLoading = false; }
+  return _whisper;
+}
+
+// ── domain vocabulary correction ("grammar file" for Whisper) ──
+// Whisper base.en mishears proper nouns/jargon (e.g. "Palantir" -> "palamis").
+// We derive a lexicon from the user's context + docs and fuzzy-correct the
+// transcript toward it. Local, free, high-precision (conservative thresholds);
+// the LLM refine pass handles the rest. See client: context sent to /transcribe.
+const STT_COMMON_WORDS = new Set(('the be to of and a in that have i it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is are was were been has had did going got me my your our their here say said go do done very really kind sort thing things lot okay yeah yes no maybe gonna wanna got let going need').split(' '));
+
+function sttSoundex(s) {
+  s = s.toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return '';
+  const codes = { B:1,F:1,P:1,V:1, C:2,G:2,J:2,K:2,Q:2,S:2,X:2,Z:2, D:3,T:3, L:4, M:5,N:5, R:6 };
+  let out = s[0], prev = codes[s[0]] || 0;
+  for (let i = 1; i < s.length && out.length < 4; i++) {
+    const c = codes[s[i]] || 0;
+    if (c && c !== prev) out += c;
+    if (s[i] !== 'H' && s[i] !== 'W') prev = c;
+  }
+  return (out + '000').slice(0, 4);
+}
+function sttLeven(a, b) {
+  const m = a.length, n = b.length;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[m][n];
+}
+// Build a lexicon of {disp, lc, sx} from context text.
+function buildSttLexicon(context) {
+  if (!context || typeof context !== 'string') return [];
+  const tokens = context.match(/[A-Za-z][A-Za-z'&./-]*[A-Za-z]|[A-Z]{2,}/g) || [];
+  const byLc = new Map();
+  for (const w of tokens) {
+    const lc = w.toLowerCase();
+    const isAcronym = w.length >= 2 && w.length <= 6 && w === w.toUpperCase() && /[A-Z]/.test(w);
+    if (!isAcronym && (lc.length < 4 || STT_COMMON_WORDS.has(lc))) continue;
+    // prefer a capitalized/acronym display form if we see one
+    const existing = byLc.get(lc);
+    const better = !existing || (w[0] === w[0].toUpperCase() && existing.disp[0] !== existing.disp[0].toUpperCase());
+    if (better) byLc.set(lc, { disp: w, lc, sx: sttSoundex(lc) });
+  }
+  return [...byLc.values()];
+}
+// Correct a transcript word-by-word against the lexicon. Conservative.
+function correctTranscript(text, context) {
+  if (!text || !context) return text;
+  const lex = buildSttLexicon(context);
+  if (!lex.length) return text;
+  return text.replace(/[A-Za-z][A-Za-z'-]*/g, (tok) => {
+    const lc = tok.toLowerCase();
+    if (lc.length < 4 || STT_COMMON_WORDS.has(lc)) return tok;
+    const sx = sttSoundex(lc);
+    let best = null, bestD = Infinity;
+    for (const v of lex) {
+      if (v.lc === lc) return v.disp;                     // exact -> normalize casing
+      if (lc[0] !== v.lc[0]) continue;                    // anchor on first letter
+      if (Math.abs(v.lc.length - lc.length) > 3) continue;
+      const d = sttLeven(lc, v.lc);
+      const phonetic = v.sx.slice(0, 3) === sx.slice(0, 3); // strong phonetic anchor
+      // phonetic match -> tolerate more edits; otherwise only fix 1-char typos
+      const thr = phonetic ? Math.max(2, Math.round(v.lc.length * 0.45)) : 1;
+      if (d <= thr && d < bestD) { best = v; bestD = d; }
+    }
+    return best ? best.disp : tok;
   });
 }
 
@@ -347,7 +564,7 @@ async function getEmbedder() {
   _embedderLoading = true;
   log('Loading embedding model…');
   try {
-    const { pipeline } = await import('@xenova/transformers');
+    const { pipeline } = await getTransformers();
     _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { quantized: true });
     log('Embedding model ready.');
   } finally { _embedderLoading = false; }
@@ -451,15 +668,15 @@ function ensureUserSettings(userId) {
 
 // ── Stripe / license helpers ───────────────────────────────────
 function generateLicenseKey(type) {
-  const secret = loadEnvVar('LICENSE_SECRET') || 'meeto-dev-secret';
+  const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
   const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-  return `MEETO-${payload}.${sig}`;
+  return `MEETINTEL-${payload}.${sig}`;
 }
 function verifyLicenseKey(key) {
   try {
-    const secret = loadEnvVar('LICENSE_SECRET') || 'meeto-dev-secret';
-    const m = key.match(/^MEETO-(.+)\.([A-Za-z0-9_-]+)$/);
+    const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
+    const m = key.match(/^MEETINTEL-(.+)\.([A-Za-z0-9_-]+)$/);
     if (!m) return null;
     const [, payload, sig] = m;
     const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
@@ -468,19 +685,74 @@ function verifyLicenseKey(key) {
   } catch(e) { return null; }
 }
 
+// ── Ed25519 desktop license (offline-verifiable; unforgeable) ──────
+// Keys are minted by the owner with the PRIVATE key (tools/sign-license.js);
+// the app verifies with this embedded PUBLIC key. Format:
+//   MEETINTEL2-<payloadB64url>.<ed25519SigB64url>
+const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAx2WzvIFxDl4HTErb8FJTlzLnP0cbB2KMd5K5S3N4IOM=
+-----END PUBLIC KEY-----`;
+const LICENSE_FILE = path.join(DATA_DIR, 'license.key');
+let _license = null; // cached verified payload (desktop only)
+
+function verifyLicenseV2(key) {
+  try {
+    const m = (key || '').trim().match(/^MEETINTEL2-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    const [, payloadB64, sigB64] = m;
+    const ok = crypto.verify(null, Buffer.from(payloadB64),
+      crypto.createPublicKey(LICENSE_PUBLIC_KEY), Buffer.from(sigB64, 'base64url'));
+    if (!ok) return null;
+    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch(e) { return null; }
+}
+function loadLicense() {
+  try { if (fs.existsSync(LICENSE_FILE)) _license = verifyLicenseV2(fs.readFileSync(LICENSE_FILE, 'utf8')); }
+  catch(e) { _license = null; }
+  return _license;
+}
+// Hosted/web mode is never license-gated (it uses the trial system). Desktop is,
+// except in an unpackaged dev build (DESKTOP_DEV) so the app is testable locally.
+function isLicensed() { return (DESKTOP_MODE && !DESKTOP_DEV) ? !!(_license || loadLicense()) : true; }
+
 // ── server ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
-
-  // ── public routes ────────────────────────────────────────────
+  const skipLog = ['/auth/status', '/'].includes(url) || url.startsWith('/static');
+  if (!skipLog) log(`${req.method} ${url}`);
   if (req.method === 'GET' && url === '/landing') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
   if (req.method === 'GET' && url === '/auth/status') {
     const userId = checkToken(req);
     return json(res, 200, { authenticated: !!userId });
+  }
+
+  if (req.method === 'GET' && url === '/version') {
+    return json(res, 200, { version: VERSION, build: BUILD, started: STARTED });
+  }
+
+  // License status (public so the activation page can read it). Web mode is
+  // always "licensed" (trial system handles access there).
+  if (req.method === 'GET' && url === '/license/status') {
+    if (!DESKTOP_MODE) return json(res, 200, { licensed: true, mode: 'web' });
+    const lic = _license || loadLicense();
+    return json(res, 200, lic
+      ? { licensed: true, plan: lic.plan, email: lic.email || null, updatesUntil: lic.updatesUntil || null }
+      : { licensed: false });
+  }
+
+  // Activate a desktop license (public in desktop mode; verifies Ed25519, stores it).
+  if (req.method === 'POST' && url === '/license/activate' && DESKTOP_MODE) {
+    const body = JSON.parse(await readBody(req));
+    const lic = verifyLicenseV2(body.key || '');
+    if (!lic) return json(res, 400, { error: 'Invalid or unrecognized license key.' });
+    try { fs.writeFileSync(LICENSE_FILE, (body.key || '').trim()); } catch(e) { return json(res, 500, { error: 'Could not save license.' }); }
+    _license = lic;
+    log('Desktop license activated:', lic.plan, lic.email || '');
+    return json(res, 200, { ok: true, plan: lic.plan });
   }
 
   if (req.method === 'POST' && url === '/auth/register') {
@@ -496,7 +768,7 @@ const server = http.createServer(async (req, res) => {
     saveDb();
     const user = dbGet(`SELECT id FROM users WHERE email = '${emailSafe}'`);
     const token = makeToken(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
     log('New user registered:', email);
     return json(res, 200, { ok: true });
   }
@@ -509,14 +781,47 @@ const server = http.createServer(async (req, res) => {
       return json(res, 401, { error: 'Incorrect email or password' });
     }
     const token = makeToken(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, req);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'POST' && url === '/auth/forgot') {
+    const body = JSON.parse(await readBody(req));
+    const emailSafe = (body.email || '').toLowerCase().replace(/'/g, "''");
+    const user = dbGet(`SELECT id FROM users WHERE email = '${emailSafe}'`);
+    if (user) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      db.run(`UPDATE users SET reset_token='${token}', reset_expires='${expires}' WHERE id=${user.id}`);
+      saveDb();
+      try { await sendResetEmail(emailSafe, token); } catch(e) { log('Reset email error:', e.message); }
+    }
+    return json(res, 200, { ok: true }); // always 200 to prevent email enumeration
+  }
+
+  if (req.method === 'GET' && url === '/reset') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'reset.html'), 'utf8'));
+  }
+
+  if (req.method === 'POST' && url === '/auth/reset-password') {
+    const body = JSON.parse(await readBody(req));
+    const { token, password } = body;
+    if (!token || !password || password.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
+    const tokenSafe = token.replace(/'/g, "''");
+    const user = dbGet(`SELECT id, reset_expires FROM users WHERE reset_token='${tokenSafe}'`);
+    if (!user || !user.reset_expires || new Date(user.reset_expires) < new Date()) {
+      return json(res, 400, { error: 'Reset link is invalid or has expired' });
+    }
+    db.run(`UPDATE users SET pwd_hash='${hashPwd(password)}', reset_token=NULL, reset_expires=NULL WHERE id=${user.id}`);
+    saveDb();
     return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/auth/logout') {
-    const m = (req.headers.cookie || '').match(/meeto_sid=([a-f0-9]{64})/);
+    const m = (req.headers.cookie || '').match(/meetintel_sid=([a-f0-9]{64})/);
     if (m) sessions.delete(m[1]);
-    clearSessionCookie(res);
+    clearSessionCookie(res, req);
     return json(res, 200, { ok: true });
   }
 
@@ -533,12 +838,12 @@ const server = http.createServer(async (req, res) => {
         mode: isAnnual ? 'subscription' : 'payment',
         line_items: [{ price_data: {
           currency: 'usd',
-          product_data: { name: isAnnual ? 'Meeto Annual License' : 'Meeto Lifetime License' },
+          product_data: { name: isAnnual ? 'Meetintel Annual License' : 'Meetintel Lifetime License' },
           unit_amount: isAnnual ? 2995 : 11900,
           ...(isAnnual ? { recurring: { interval: 'year' } } : {})
         }, quantity: 1 }],
-        success_url: `${APP_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${APP_URL}/checkout/cancel`
+        success_url: `${PUBLIC_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${PUBLIC_URL}/checkout/cancel`
       });
       return json(res, 200, { url: session.url });
     } catch(e) { return json(res, 500, { error: e.message }); }
@@ -562,7 +867,7 @@ const server = http.createServer(async (req, res) => {
     const html = fs.readFileSync(path.join(__dirname, 'success.html'), 'utf8')
       .replace('{{LICENSE_KEY}}', licenseKey)
       .replace('{{PLAN_TYPE}}', planType === 'annual' ? 'Annual' : 'Lifetime');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(html);
   }
 
@@ -616,12 +921,20 @@ const server = http.createServer(async (req, res) => {
 
   // ── main app ─────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/') {
-    if (!checkToken(req)) {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8'));
+    const htmlHdr = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, must-revalidate' };
+    // Desktop, unlicensed → activation page (the free trial lives on the web demo).
+    if (DESKTOP_MODE && !isLicensed()) {
+      res.writeHead(200, htmlHdr);
+      return res.end(fs.readFileSync(path.join(__dirname, 'activate.html'), 'utf8').replace(/__BUILD__/g, BUILD));
     }
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'));
+    if (!checkToken(req)) {
+      res.writeHead(200, htmlHdr);
+      return res.end(fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8').replace(/__BUILD__/g, BUILD));
+    }
+    res.writeHead(200, htmlHdr);
+    return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+      .replace(/__BUILD__/g, `${VERSION} build ${BUILD}`)
+      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0'));
   }
 
   // ── all routes below require auth ────────────────────────────
@@ -633,8 +946,18 @@ const server = http.createServer(async (req, res) => {
 
   // ── admin ────────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/admin') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
+  }
+
+  if (req.method === 'GET' && url === '/admin/reset-links') {
+    const r = db.exec(`SELECT email, reset_token, reset_expires FROM users WHERE reset_token IS NOT NULL AND reset_expires > '${new Date().toISOString()}'`);
+    const links = r.length ? r[0].values.map(v => ({
+      email: v[0],
+      url: `${PUBLIC_URL}/reset?token=${v[1]}`,
+      expires: v[2]
+    })) : [];
+    return json(res, 200, links);
   }
 
   if (req.method === 'GET' && url === '/admin/stats') {
@@ -655,6 +978,15 @@ const server = http.createServer(async (req, res) => {
       id: v[0], email: v[1], tier: v[2], trialSecondsUsed: v[3], createdAt: v[4], licenseType: v[5], dataDeleted: !!v[6]
     })) : [];
     return json(res, 200, users);
+  }
+
+  if (req.method === 'POST' && url === '/admin/reset-password') {
+    const body = JSON.parse(await readBody(req));
+    const { targetUserId, newPassword } = body;
+    if (!newPassword || newPassword.length < 6) return json(res, 400, { error: 'Password must be at least 6 characters' });
+    db.run(`UPDATE users SET pwd_hash='${hashPwd(newPassword)}' WHERE id = ${parseInt(targetUserId)}`);
+    saveDb();
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/admin/grant-license') {
@@ -703,8 +1035,8 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       provider: s?.ai_provider || 'openai',
       model: s?.ai_model || 'gpt-4o',
-      hasAnthropicKey: !!(s?.anthropic_key),
-      hasOpenaiKey: !!(s?.openai_key),
+      hasAnthropicKey: !!(s?.anthropic_key) || (s?.openai_key || '').startsWith('sk-ant-'),
+      hasOpenaiKey: isRealOpenAIKey(s?.openai_key),
       tier: user.tier,
       trialSecondsUsed: user.trial_seconds_used || 0,
       trialSecondsTotal: TRIAL_SECONDS,
@@ -758,6 +1090,15 @@ const server = http.createServer(async (req, res) => {
     saveDb(); return json(res, 200, { ok: true });
   }
 
+  // Replace just the transcript (used when generating it from a recording —
+  // does NOT touch total_cards/ended_at so it won't clobber existing meeting data).
+  if (req.method === 'POST' && url === '/meeting/transcript') {
+    const body = JSON.parse(await readBody(req));
+    db.run(`UPDATE meetings SET transcript=?, word_count=? WHERE id=? AND user_id=${userId}`,
+      [body.transcript || '', body.wordCount || 0, body.id]);
+    saveDb(); return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && url === '/meeting/end') {
     const body = JSON.parse(await readBody(req));
     db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
@@ -765,11 +1106,85 @@ const server = http.createServer(async (req, res) => {
     saveDb(); return json(res, 200, { ok: true });
   }
 
+  // ── A/V recording (desktop only: large files stored on local disk) ──
+  // Upload: streamed straight to disk so a long meeting never buffers in RAM.
+  if (req.method === 'POST' && url === '/recording/upload') {
+    if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
+    if (!isLicensed()) return json(res, 402, { error: 'license_required' });
+    const meetingId = parseInt(new URL(req.url, 'http://x').searchParams.get('meetingId') || '0');
+    if (!meetingId) return json(res, 400, { error: 'missing meetingId' });
+    const own = dbGet(`SELECT id FROM meetings WHERE id=${meetingId} AND user_id=${userId}`);
+    if (!own) return json(res, 404, { error: 'meeting not found' });
+    const filename = `meeting-${meetingId}.webm`;
+    const dest = path.join(RECORDINGS_DIR, filename);
+    const ws = fs.createWriteStream(dest);
+    req.pipe(ws);
+    ws.on('finish', () => {
+      db.run(`UPDATE meetings SET recording_path=? WHERE id=${meetingId}`, [filename]);
+      saveDb();
+      let size = 0; try { size = fs.statSync(dest).size; } catch(e) {}
+      log(`Recording saved: ${dest} (${Math.round(size/1024/1024*10)/10} MB)`);
+      return json(res, 200, { ok: true, path: filename, bytes: size });
+    });
+    ws.on('error', e => { log('Recording write error:', e.message); try { json(res, 500, { error: e.message }); } catch(_) {} });
+    req.on('error', e => { log('Recording upload req error:', e.message); ws.destroy(); });
+    return;
+  }
+
+  // Stream a saved recording back to the player, with HTTP Range support so
+  // the <video> element can seek without downloading the whole file.
+  if (req.method === 'GET' && url.startsWith('/recording/')) {
+    if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
+    const id = parseInt(url.split('/')[2]);
+    const row = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    if (!row || !row.recording_path) return json(res, 404, { error: 'no recording' });
+    const file = path.join(RECORDINGS_DIR, row.recording_path);
+    if (!fs.existsSync(file)) return json(res, 404, { error: 'file missing' });
+    const stat = fs.statSync(file);
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range) || [];
+      let start = m[1] ? parseInt(m[1]) : 0;
+      let end = m[2] ? parseInt(m[2]) : stat.size - 1;
+      if (isNaN(start) || start < 0) start = 0;
+      if (isNaN(end) || end >= stat.size) end = stat.size - 1;
+      if (start > end) { res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` }); return res.end(); }
+      res.writeHead(206, {
+        'Content-Type': 'video/webm',
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': end - start + 1
+      });
+      return fs.createReadStream(file, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { 'Content-Type': 'video/webm', 'Content-Length': stat.size, 'Accept-Ranges': 'bytes' });
+    return fs.createReadStream(file).pipe(res);
+  }
+
   if (req.method === 'POST' && url === '/card/save') {
     const body = JSON.parse(await readBody(req));
+    const ids = [];
     const stmt = db.prepare(`INSERT INTO cards (meeting_id, captured_at, tag, title, body, transcript_snapshot) VALUES (?,?,?,?,?,?)`);
-    body.cards.forEach(c => stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']));
-    stmt.free(); saveDb(); return json(res, 200, { ok: true });
+    body.cards.forEach(c => {
+      stmt.run([body.meetingId, new Date().toISOString(), c.tag, c.title, c.body, body.transcriptSnapshot || '']);
+      ids.push(db.exec('SELECT last_insert_rowid()')[0].values[0][0]); // map each card to its db id
+    });
+    stmt.free(); saveDb(); return json(res, 200, { ok: true, ids });
+  }
+
+  // Persist a card's pinned/deleted state, or a merged body (scoped to the user's own meetings).
+  if (req.method === 'POST' && url === '/card/update') {
+    const { id, pinned, deleted, body: cardBody } = JSON.parse(await readBody(req));
+    const cid = parseInt(id);
+    if (!cid) return json(res, 400, { error: 'bad id' });
+    const own = dbGet(`SELECT c.id FROM cards c JOIN meetings m ON m.id = c.meeting_id WHERE c.id = ${cid} AND m.user_id = ${userId}`);
+    if (!own) return json(res, 404, { error: 'not found' });
+    const sets = [], params = [];
+    if (pinned !== undefined) sets.push(`pinned = ${pinned ? 1 : 0}`);
+    if (deleted !== undefined) sets.push(`deleted = ${deleted ? 1 : 0}`);
+    if (cardBody !== undefined) { sets.push(`body = ?`); params.push(String(cardBody)); }
+    if (sets.length) { db.run(`UPDATE cards SET ${sets.join(', ')} WHERE id = ${cid}`, params); saveDb(); }
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url === '/meetings') {
@@ -781,7 +1196,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
     const m = db.exec(`SELECT * FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    const c = db.exec(`SELECT * FROM cards WHERE meeting_id=${id} ORDER BY captured_at ASC`);
+    const c = db.exec(`SELECT * FROM cards WHERE meeting_id=${id} AND COALESCE(deleted,0)=0 ORDER BY COALESCE(pinned,0) DESC, captured_at ASC`);
     if (!m.length || !m[0].values.length) return json(res, 404, { error: 'Not found' });
     const meeting = {}; m[0].columns.forEach((col, i) => meeting[col] = m[0].values[0][i]);
     const cardCols = c.length ? c[0].columns : [];
@@ -791,6 +1206,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
+    // Remove the recording file too (scoped to the user's own meeting).
+    const own = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    if (own && own.recording_path) {
+      try { fs.unlinkSync(path.join(RECORDINGS_DIR, own.recording_path)); } catch(e) {}
+    }
     db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
     db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
     saveDb(); return json(res, 200, { ok: true });
@@ -819,10 +1239,16 @@ const server = http.createServer(async (req, res) => {
 
   // ── AI proxy ─────────────────────────────────────────────────
   if (req.method === 'POST' && url === '/proxy') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     ensureUserSettings(userId);
     const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
     const provider = s?.ai_provider || 'openai';
-    const model = s?.ai_model || 'gpt-4o';
+    const rawModel = s?.ai_model || '';
+    const isClaudeModel = rawModel.startsWith('claude');
+    const isOpenAIModel = rawModel.startsWith('gpt') || rawModel.startsWith('o1') || rawModel.startsWith('o3');
+    const model = provider === 'anthropic'
+      ? (isClaudeModel ? rawModel : 'claude-sonnet-4-6')
+      : (isOpenAIModel ? rawModel : 'gpt-4o');
     const body = await readBody(req);
     try {
       if (provider === 'anthropic') {
@@ -830,36 +1256,53 @@ const server = http.createServer(async (req, res) => {
         if (!apiKey) return json(res, 400, { error: 'No Anthropic API key saved. Go to Settings to add your key.' });
         const parsedBody = JSON.parse(body);
         parsedBody.model = model;
+        log('proxy: Anthropic provider, model=' + model);
         const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+        log('proxy: Anthropic response', result.status, result.body.substring(0, 80));
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       } else {
-        const apiKey = s?.openai_key;
+        let apiKey = s?.openai_key;
         if (!apiKey) return json(res, 400, { error: 'No OpenAI API key saved. Go to Settings to add your key.' });
+        // Auto-route: if an Anthropic key was saved as the OpenAI key, use the Anthropic proxy
+        if (apiKey.startsWith('sk-ant-')) {
+          log('proxy: auto-routing Anthropic key → Anthropic API');
+          const claudeModel = isClaudeModel ? rawModel : 'claude-sonnet-4-6';
+          const parsedBody = JSON.parse(body);
+          parsedBody.model = claudeModel;
+          const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
+          log('proxy: Anthropic response', result.status);
+          res.writeHead(result.status, { 'Content-Type': 'application/json' });
+          return res.end(result.body);
+        }
         const result = await proxyOpenAI(body, apiKey, model);
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       }
-    } catch(e) { return json(res, 500, { error: e.message }); }
+    } catch(e) { log('proxy error:', e.message); return json(res, 500, { error: e.message }); }
   }
 
-  // ── Transcription (OpenAI Whisper API) ───────────────────────
+  // ── Transcription (local Whisper — offline, no API key, no per-use cost) ──
   if (req.method === 'POST' && url === '/transcribe') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
-    ensureUserSettings(userId);
-    const s = dbGet(`SELECT openai_key FROM user_settings WHERE user_id = ${userId}`);
-    if (!s?.openai_key) return json(res, 400, { error: 'no_openai_key', message: 'Add an OpenAI key in Settings to enable transcription.' });
     const body = JSON.parse(await readBody(req));
-    const { audio, sampleRate = 16000 } = body;
+    const { audio, sampleRate = 16000, context = '' } = body;
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
+      const whisper = await getWhisper();
       const buf = Buffer.from(audio, 'base64');
+      // slice() copies bytes into a new ArrayBuffer at offset 0 — avoids Float32Array alignment error
       const aligned = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       const audioData = new Float32Array(aligned);
       const audioSeconds = audioData.length / sampleRate;
-      const wav = float32ToWav(audioData, sampleRate);
-      const text = await openaiWhisper(wav, s.openai_key);
+      const result = await whisper(audioData, { sampling_rate: sampleRate });
+      const raw = result.text || '';
+      // local "grammar file": fuzzy-correct toward the user's domain vocabulary
+      const text = correctTranscript(raw, context);
+      if (text !== raw) log('Transcribe corrected: ' + JSON.stringify(raw) + ' → ' + JSON.stringify(text));
+      log('Transcribe: ' + audioData.length + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
       // track trial usage
       if (user.tier === 'trial') {
         const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
@@ -870,8 +1313,33 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { text });
     } catch(e) {
       log('Transcription error:', e.message);
-      return json(res, 200, { text: '' });
+      return json(res, 500, { error: 'transcription_failed', message: e.message });
     }
+  }
+
+  // LLM refine pass: clean up ASR errors using the context as a glossary.
+  // Layered on top of the local vocabulary correction; uses a cheap model.
+  if (req.method === 'POST' && url === '/transcribe/refine') {
+    if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
+    const ts = trialStatus(user);
+    if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
+    ensureUserSettings(userId);
+    const { text = '', context = '' } = JSON.parse(await readBody(req));
+    const wc = text.trim().split(/\s+/).filter(Boolean).length;
+    if (wc < 4) return json(res, 200, { text });               // not worth a call
+    const system = 'You fix speech-to-text transcription errors. Return ONLY the corrected transcript text, nothing else. '
+      + 'Use the provided context as a glossary to fix misheard names, jargon, and acronyms. Preserve the speaker\'s exact '
+      + 'wording, meaning, fillers and punctuation — do NOT summarize, rephrase, translate, answer, or add anything. '
+      + 'If unsure about a word, leave it unchanged.';
+    const userMsg = (context ? 'Context/glossary:\n' + context.slice(0, 4000) + '\n\n' : '')
+      + 'Transcript to correct:\n' + text;
+    const corrected = await llmComplete(userId, {
+      system, messages: [{ role: 'user', content: userMsg }],
+      max_tokens: Math.min(1024, Math.ceil(text.length / 2) + 64)
+    });
+    const out = (corrected && corrected.trim()) ? corrected.trim() : text;
+    if (out !== text) log('Refine: ' + JSON.stringify(text) + ' → ' + JSON.stringify(out));
+    return json(res, 200, { text: out });
   }
 
   // ── documents ────────────────────────────────────────────────
@@ -1023,8 +1491,11 @@ const server = http.createServer(async (req, res) => {
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      log(`Meeto running at http://0.0.0.0:${PORT}`);
+      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
       resolve();
+      // Pre-warm the local Whisper model in the background so the first
+      // transcription isn't blocked on a cold download/load.
+      getWhisper().catch(e => log('Whisper pre-warm failed:', e.message));
     });
   });
 });

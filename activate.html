@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Activate Meetintel</title>
+<style>
+  :root { --bg:#0b0f17; --surface:#131a26; --surface2:#1b2433; --border:#26303f; --text:#e8edf4; --text2:#9fb0c3; --text3:#6b7a8d; --accent:#3b82f6; --danger:#ef4444; --ok:#22c55e; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  .card { width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:32px 30px; box-shadow:0 24px 70px rgba(0,0,0,0.45); }
+  .logo { font-size:30px; }
+  h1 { font-size:1.35rem; margin:12px 0 4px; letter-spacing:-0.02em; }
+  p.sub { color:var(--text2); font-size:0.92rem; line-height:1.55; margin:0 0 22px; }
+  label { display:block; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text3); font-weight:600; margin-bottom:7px; }
+  textarea { width:100%; height:90px; resize:vertical; background:var(--surface2); border:1px solid var(--border); border-radius:10px; color:var(--text); padding:11px 13px; font-family:Consolas,monospace; font-size:12px; line-height:1.5; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  button { width:100%; margin-top:14px; padding:13px; border:0; border-radius:10px; background:var(--accent); color:#fff; font-size:0.98rem; font-weight:600; cursor:pointer; transition:filter .15s; }
+  button:hover { filter:brightness(1.08); }
+  button:disabled { opacity:.6; cursor:default; }
+  .msg { margin-top:14px; font-size:0.86rem; line-height:1.5; display:none; }
+  .msg.err { color:var(--danger); display:block; }
+  .msg.ok { color:var(--ok); display:block; }
+  .foot { margin-top:22px; padding-top:18px; border-top:1px solid var(--border); font-size:0.82rem; color:var(--text3); line-height:1.6; }
+  .foot a { color:var(--text2); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">☄️</div>
+    <h1>Activate Meetintel</h1>
+    <p class="sub">Paste the license key from your purchase email to unlock the desktop app. Everything runs locally on this machine — no account needed.</p>
+
+    <label for="key">License key</label>
+    <textarea id="key" placeholder="MEETINTEL2-..." autofocus spellcheck="false"></textarea>
+    <button id="btn" onclick="activate()">Activate</button>
+    <div id="msg" class="msg"></div>
+
+    <div class="foot">
+      No license yet? <a href="https://meetintel.io/#pricing" target="_blank" rel="noopener">Buy Meetintel</a>
+      &nbsp;·&nbsp; Want to try first? <a href="https://meetintel.io" target="_blank" rel="noopener">Use the free web demo</a>.
+    </div>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  function show(cls, text) { const m = $('msg'); m.className = 'msg ' + cls; m.textContent = text; }
+
+  async function activate() {
+    const key = $('key').value.trim();
+    if (!key) { show('err', 'Paste your license key first.'); return; }
+    $('btn').disabled = true; show('', 'Activating…');
+    try {
+      const r = await fetch('/license/activate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) { show('ok', 'Activated! Loading Meetintel…'); setTimeout(() => location.href = '/', 700); }
+      else { show('err', d.error || 'Activation failed.'); $('btn').disabled = false; }
+    } catch(e) { show('err', 'Could not reach the app. Try again.'); $('btn').disabled = false; }
+  }
+  $('key').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') activate(); });
+</script>
+</body>
+</html>

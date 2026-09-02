@@ -1,10 +1,9 @@
 services:
-  meeto:
+  meetintel:
     build: .
-    container_name: meeto
-    # Port not exposed publicly — cloudflared proxies inbound traffic
-    expose:
-      - "7432"
+    container_name: meetintel
+    ports:
+      - "7432:7432"
     volumes:
       - ./data:/app/data
     env_file:
@@ -13,6 +12,7 @@ services:
       - NODE_ENV=production
       - DATA_DIR=/app/data
       - PORT=7432
+      - PUBLIC_URL=${PUBLIC_URL:-https://meetintel.io}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:7432/auth/status', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
@@ -21,19 +21,25 @@ services:
       retries: 3
       start_period: 15s
 
+  # Cloudflare tunnel for meetintel.io → routes to the meetintel container.
+  # Set TUNNEL_TOKEN in a .env file next to this compose, and in the Cloudflare
+  # dashboard point the tunnel's public hostname to: http://meetintel:7432
+  # Only starts when you run with the "tunnel" profile: docker-compose --profile tunnel up -d
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared
+    container_name: meetintel-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
     volumes:
       - ./data/cloudflared:/etc/cloudflared:ro
     depends_on:
-      meeto:
+      meetintel:
         condition: service_healthy
     networks:
       - default
+    profiles:
+      - tunnel
 
 networks:
   default:
-    name: meeto_net
+    name: meetintel_net
