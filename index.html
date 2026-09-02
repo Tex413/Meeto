@@ -2638,6 +2638,7 @@ ${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${intelContext}${await meetingCompe
 
 Answer in 1-3 short sentences, conversationally — this will be read aloud, so no markdown, no bullet points, no code blocks. If you don't have enough information to answer confidently, say so briefly rather than guessing.`;
 
+  let answer;
   try {
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2647,18 +2648,23 @@ Answer in 1-3 short sentences, conversationally — this will be read aloud, so 
       })
     });
     const data = await resp.json();
-    const answer = data?.content?.[0]?.text?.trim();
-    if (answer) {
-      addCards([{ tag: 'board-member', title: question.length > 60 ? question.slice(0, 60) + '…' : question, body: answer }]);
-      speakAnswer(answer);
-    } else {
-      dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
-      setPresenceState(listening ? 'listening' : 'idle');
-    }
+    answer = data?.content?.[0]?.text?.trim();
+    if (!answer) dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
   } catch(e) {
-    dbg('Addressed question failed: ' + e.message);
-    setPresenceState(listening ? 'listening' : 'idle');
+    dbg('Addressed question fetch failed: ' + e.message);
   }
+  if (!answer) { setPresenceState(listening ? 'listening' : 'idle'); return; }
+
+  dbg('Addressed question answered — speaking: ' + answer.slice(0, 80));
+  // Independent try/catches: speaking is the primary behavior here, so a
+  // failure logging the card (e.g. no meeting started, so nothing to persist
+  // to) must never be able to silently prevent the answer from being spoken.
+  try {
+    addCards([{ tag: 'board-member', title: question.length > 60 ? question.slice(0, 60) + '…' : question, body: answer }]);
+  } catch(e) { dbg('Addressed question: card creation failed (speaking anyway): ' + e.message); }
+  try {
+    await speakAnswer(answer);
+  } catch(e) { dbg('Addressed question: speakAnswer threw: ' + e.message); setPresenceState(listening ? 'listening' : 'idle'); }
 }
 
 // Speaks the answer via local Piper TTS (WASM, runs on-device — no cloud API,

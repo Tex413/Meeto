@@ -18,18 +18,26 @@ async function getTransformers() {
   return _tf;
 }
 
-// small.en, unquantized: base.en was noticeably inaccurate on real
-// conversational speech (see server log evidence from the accuracy
-// evaluation), and since this runs off the main thread anyway, slower
-// inference just means each chunk takes a bit longer to come back — it
-// doesn't freeze the app. Unquantized (fp32) trades some of that speed for
-// the accuracy quantization gives up; the embedder stays quantized since
-// it's not what was inaccurate.
+// base.en, quantized — reverted back to this after small.en (both
+// unquantized AND quantized) proved too slow on real conversational speech:
+// unquantized measured 8-11s per 4s chunk from actual server logs; quantized
+// small.en couldn't be trusted either, since the only benchmark available
+// here (a synthetic pure tone) barely exercises Whisper's autoregressive
+// decoder — a tone produces almost no output tokens, and token-by-token
+// decoding is where most of Whisper's real cost lives, so that benchmark
+// dramatically understated real-speech latency both times (it showed ~2.7s
+// unquantized vs the real 8-11s, and only ~14% faster quantized — nowhere
+// near quantization's normal 2-4x, meaning it wasn't a trustworthy signal
+// either way). Rather than gamble again, this reverts to the base.en+
+// quantized config that was proven fast with real evidence in Phase 2.
+// The accuracy problem this was chasing needs a different lever next
+// (better context/lexicon priming, not a bigger model this hardware can't
+// run fast enough without GPU acceleration).
 let _whisper = null;
 async function getWhisper() {
   if (_whisper) return _whisper;
   const { pipeline } = await getTransformers();
-  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en');
+  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en', { quantized: true });
   return _whisper;
 }
 
