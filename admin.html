@@ -299,6 +299,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 <script>
 let genKey = '';
+let _users = [];
+// User emails are registrant-controlled: escape before putting them in HTML.
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 function showPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -422,6 +425,7 @@ function confirmLogout() {
 
 async function loadUsers() {
   const users = await fetch('/admin/users').then(r => r.json()).catch(() => []);
+  _users = Array.isArray(users) ? users : [];
   const el = document.getElementById('usersTable');
   if (!users.length) { el.innerHTML = '<p style="color:var(--text3);font-size:14px">No users yet.</p>'; return; }
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -434,20 +438,21 @@ async function loadUsers() {
     </tr></thead>
     <tbody>
       ${users.map(u => `<tr>
-        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${u.email}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${esc(u.email)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)"><span class="pill ${u.tier==='paid'?'ok':'warn'}">${u.tier}</span>${u.dataDeleted?'<span class="pill bad" style="margin-left:4px">deleted</span>':''}</td>
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${Math.round((u.trialSecondsUsed||0)/60)} min</td>
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)">${u.createdAt?new Date(u.createdAt).toLocaleDateString():''}</td>
         <td style="padding:8px 12px;border-bottom:1px solid var(--border)">
           ${u.tier!=='paid'?`<button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="grantLicense(${u.id},'lifetime')">Grant lifetime</button>`:''}
-          <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px;margin-left:4px" onclick="resetPassword(${u.id},'${u.email}')">Reset pwd</button>
+          <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px;margin-left:4px" onclick="resetPassword(${parseInt(u.id)})">Reset pwd</button>
         </td>
       </tr>`).join('')}
     </tbody>
   </table>`;
 }
 
-async function resetPassword(userId, email) {
+async function resetPassword(userId) {
+  const email = (_users.find(u => u.id === userId) || {}).email || ('user #' + userId);
   const newPassword = prompt(`New password for ${email} (min 6 chars):`);
   if (!newPassword) return;
   if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
@@ -464,10 +469,10 @@ async function loadResetLinks() {
   section.style.display = '';
   list.innerHTML = links.map(l => `
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;">
-      <strong>${l.email}</strong> — expires ${new Date(l.expires).toLocaleTimeString()}
+      <strong>${esc(l.email)}</strong> — expires ${new Date(l.expires).toLocaleTimeString()}
       <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
-        <code style="flex:1;font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.url}</code>
-        <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="navigator.clipboard.writeText('${l.url}');toast('Copied!')">Copy</button>
+        <code style="flex:1;font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.url)}</code>
+        <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent);toast('Copied!')">Copy</button>
       </div>
     </div>`).join('');
 }

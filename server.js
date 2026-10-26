@@ -261,6 +261,16 @@ function trialStatus(user) {
   return { ok: !expired, tier: 'trial', secondsLeft, secondsUsed: user.trial_seconds_used || 0, secondsTotal: TRIAL_SECONDS };
 }
 
+// Admin routes are owner-only. Desktop mode has a single local user (the owner).
+// Hosted mode needs ADMIN_EMAILS (comma-separated) in data/.env or the
+// environment; with it unset every /admin route is refused.
+function isAdmin(user) {
+  if (DESKTOP_MODE) return true;
+  const list = (process.env.ADMIN_EMAILS || loadEnvVar('ADMIN_EMAILS') || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return !!user && list.includes(String(user.email || '').toLowerCase());
+}
+
 function markTrialExpired(userId) {
   const u = dbGet(`SELECT trial_expired_at FROM users WHERE id = ${userId}`);
   if (!u || u.trial_expired_at) return;
@@ -327,9 +337,18 @@ async function sendResetEmail(toEmail, token) {
 }
 
 // ── request helpers ────────────────────────────────────────────
+// Cap buffered JSON bodies (base64 audio chunks / document uploads). A/V
+// recordings stream straight to disk via /recording/upload and are not capped here.
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let b = ''; req.on('data', d => b += d); req.on('end', () => resolve(b)); req.on('error', reject);
+    let b = '', n = 0;
+    req.on('data', d => {
+      n += d.length;
+      if (n > MAX_BODY_BYTES) { reject(new Error('Request body too large')); req.destroy(); return; }
+      b += d;
+    });
+    req.on('end', () => resolve(b)); req.on('error', reject);
   });
 }
 function readRawBody(req) {
@@ -687,15 +706,19 @@ function ensureUserSettings(userId) {
 }
 
 // ── Stripe / license helpers ───────────────────────────────────
+// No hard-coded fallback secret: with LICENSE_SECRET unset, anyone who has read
+// this file could mint paid licenses, so keys are neither issued nor accepted.
 function generateLicenseKey(type) {
-  const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
+  const secret = loadEnvVar('LICENSE_SECRET');
+  if (!secret) throw new Error('LICENSE_SECRET is not configured (set it in data/.env or on /admin)');
   const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
   return `MEETINTEL-${payload}.${sig}`;
 }
 function verifyLicenseKey(key) {
   try {
-    const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
+    const secret = loadEnvVar('LICENSE_SECRET');
+    if (!secret) return null;
     const m = key.match(/^MEETINTEL-(.+)\.([A-Za-z0-9_-]+)$/);
     if (!m) return null;
     const [, payload, sig] = m;
@@ -916,10 +939,32 @@ async function refreshStockPrice(symbol) {
 }
 
 // ── server ─────────────────────────────────────────────────────
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch(e => {
+    // A thrown handler (bad JSON, oversized body, ...) used to leave the request
+    // hanging with no response. Answer 500 instead of leaking the socket.
+    log('Request error:', req.method, req.url, e.message);
+    try { json(res, 500, { error: 'internal_error' }); } catch(_) { try { res.destroy(); } catch(__) {} }
+  });
+});
+
+async function handleRequest(req, res) {
   const url = req.url.split('?')[0];
   const skipLog = ['/auth/status', '/'].includes(url) || url.startsWith('/static');
   if (!skipLog) log(`${req.method} ${url}`);
+
+  // Desktop mode has no login, so the only thing keeping other processes and
+  // web pages out of this API is that it is loopback-only. Refuse requests whose
+  // Host is not localhost (DNS rebinding) or that carry a foreign Origin (a web
+  // page in the user's browser calling http://localhost:7433 cross-origin).
+  // /api/local/* stays open to loopback callers (Stream Deck, MCP) by design.
+  if (DESKTOP_MODE && !url.startsWith('/api/local/')) {
+    const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+    const origin = req.headers.origin;
+    const hostOk = ['localhost', '127.0.0.1', '[::1]'].includes(host);
+    const originOk = !origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
+    if (!hostOk || !originOk) { res.writeHead(403); return res.end('forbidden'); }
+  }
   if (req.method === 'GET' && url === '/landing') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
@@ -1180,7 +1225,11 @@ const server = http.createServer(async (req, res) => {
   const user = dbGet(`SELECT * FROM users WHERE id = ${userId}`);
   if (!user) return json(res, 401, { error: 'User not found' });
 
-  // ── admin ────────────────────────────────────────────────────
+  // ── admin (owner only — see isAdmin) ─────────────────────────
+  if (url === '/admin' || url.startsWith('/admin/')) {
+    if (!isAdmin(user)) return json(res, 403, { error: 'Forbidden' });
+  }
+
   if (req.method === 'GET' && url === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
@@ -1227,9 +1276,10 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/admin/grant-license') {
     const body = JSON.parse(await readBody(req));
-    const { targetUserId, licenseType } = body;
-    const key = generateLicenseKey(licenseType || 'lifetime');
-    db.run(`UPDATE users SET tier='paid', license_key='${key}', license_type='${licenseType || 'lifetime'}' WHERE id = ${parseInt(targetUserId)}`);
+    const licenseType = body.licenseType === 'annual' ? 'annual' : 'lifetime';
+    let key;
+    try { key = generateLicenseKey(licenseType); } catch(e) { return json(res, 500, { error: e.message }); }
+    db.run(`UPDATE users SET tier='paid', license_key='${key}', license_type='${licenseType}' WHERE id = ${parseInt(body.targetUserId)}`);
     saveDb();
     return json(res, 200, { ok: true, key });
   }
@@ -1254,7 +1304,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/admin/generate-key') {
     const body = JSON.parse(await readBody(req));
-    return json(res, 200, { key: generateLicenseKey(body.type === 'annual' ? 'annual' : 'lifetime') });
+    try { return json(res, 200, { key: generateLicenseKey(body.type === 'annual' ? 'annual' : 'lifetime') }); }
+    catch(e) { return json(res, 500, { error: e.message }); }
   }
 
   if (req.method === 'POST' && url === '/admin/verify-key') {
@@ -1392,7 +1443,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const info = verifyLicenseKey(body.key || '');
     if (!info) return json(res, 400, { error: 'Invalid license key' });
-    db.run(`UPDATE users SET tier='paid', license_key='${body.key.replace(/'/g, "''")}', license_type='${info.type}' WHERE id = ${userId}`);
+    db.run(`UPDATE users SET tier='paid', license_key='${body.key.replace(/'/g, "''")}', license_type='${String(info.type || '').replace(/'/g, "''")}' WHERE id = ${userId}`);
     saveDb();
     return json(res, 200, { ok: true, type: info.type });
   }
@@ -1745,7 +1796,11 @@ const server = http.createServer(async (req, res) => {
   // ── open external URL (Electron compat shim) ─────────────────
   if (req.method === 'POST' && url === '/open-url') {
     const body = JSON.parse(await readBody(req));
-    try { const { shell } = require('electron'); await shell.openExternal(body.url || ''); return json(res, 200, { ok: true }); }
+    // shell.openExternal hands the string to the OS: only web URLs, never
+    // file:/smb:/custom protocol handlers.
+    const target = String(body.url || '');
+    if (!/^https?:\/\//i.test(target)) return json(res, 400, { error: 'Only http(s) URLs can be opened' });
+    try { const { shell } = require('electron'); await shell.openExternal(target); return json(res, 200, { ok: true }); }
     catch(e) { return json(res, 200, { ok: false }); }
   }
 
@@ -1821,12 +1876,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   res.writeHead(404); res.end('not found');
-});
+}
 
+// Desktop: loopback only (no login in desktop mode). Hosted: all interfaces (Docker).
+const BIND_HOST = DESKTOP_MODE ? '127.0.0.1' : '0.0.0.0';
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
-    server.listen(PORT, '0.0.0.0', () => {
-      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
+    server.listen(PORT, BIND_HOST, () => {
+      log(`Meetintel v${VERSION} build ${BUILD} running at http://${BIND_HOST}:${PORT}`);
       resolve();
       // Spawn the inference worker now so Whisper/embedder are warm (it logs
       // 'Inference worker ready' itself) before the first real request needs them.

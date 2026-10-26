@@ -1457,7 +1457,7 @@ async function loadMeetingDetail(id, title) {
         const tagClass = 'tag-' + (c.tag || 'general');
         const t = c.captured_at ? new Date(c.captured_at).toLocaleTimeString() : '';
         el.innerHTML = `
-          <span class="hist-card-tag ${tagClass}">${esc(c.tag || 'general')}</span>
+          <span class="hist-card-tag ${esc(tagClass)}">${esc(c.tag || 'general')}</span>
           <div class="hist-card-title">${c.pinned ? '<i class="ti ti-pin" aria-hidden="true" style="color:#3b82f6;"></i> ' : ''}${esc(c.title || '')}</div>
           <div class="hist-card-body">${esc(c.body || '')}</div>
           ${t ? '<div class="hist-card-time">' + t + '</div>' : ''}`;
@@ -2067,9 +2067,11 @@ function renderNewsScroller(items) {
   if (_newsRaf) { cancelAnimationFrame(_newsRaf); _newsRaf = null; }
   if (!items.length) { track.innerHTML = '<span class="intel-loading">No energy headlines available</span>'; return; }
 
-  const itemHtml = items.map(it => it.link
-    ? `<span class="intel-news-item"><a href="${it.link}" target="_blank" rel="noopener">${it.title}</a></span>`
-    : `<span class="intel-news-item">${it.title}</span>`
+  // Feed items come from third-party RSS: escape titles, allow only web links.
+  const safeLink = l => /^https?:\/\//i.test(l || '') ? esc(l) : '';
+  const itemHtml = items.map(it => safeLink(it.link)
+    ? `<span class="intel-news-item"><a href="${safeLink(it.link)}" target="_blank" rel="noopener">${esc(it.title)}</a></span>`
+    : `<span class="intel-news-item">${esc(it.title)}</span>`
   ).join('<span class="intel-news-dot">&#x25CF;</span>');
   // Duplicate for a seamless loop (classic marquee trick — pattern from a sibling app's ticker).
   track.innerHTML = itemHtml + '<span class="intel-news-dot">&#x25CF;</span>' + itemHtml;
@@ -3199,12 +3201,17 @@ function clearAll() {
   clearCardSearch();
 }
 
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Escapes for both text and attribute contexts (quotes included) — values are
+// interpolated into class="..." and value="..." as well as element bodies.
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function fmtBody(s) {
   if (!s) return '';
+  // Escape everything first: card bodies come from the LLM, which reads the
+  // transcript and uploaded documents, so they are untrusted HTML. The light
+  // markdown formatting below is applied to the escaped text.
   // handle fenced code blocks first
-  let out = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    return '<pre style="background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius);padding:8px 10px;overflow-x:auto;margin:6px 0;font-family:Consolas,monospace;font-size:11px;line-height:1.5;">' + escRaw(code.trim()) + '</pre>';
+  let out = escRaw(s).replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return '<pre style="background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius);padding:8px 10px;overflow-x:auto;margin:6px 0;font-family:Consolas,monospace;font-size:11px;line-height:1.5;">' + code.trim() + '</pre>';
   });
   // inline code
   out = out.replace(/`([^`]+)`/g, '<code style="font-family:Consolas,monospace;font-size:11px;background:var(--surface2);padding:1px 4px;border-radius:3px;">$1</code>');
@@ -3212,7 +3219,7 @@ function fmtBody(s) {
   out = out.replace(/\n/g, '<br>');
   return out;
 }
-function escRaw(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escRaw(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── document RAG ─────────────────────────────────────────────
 let _docsOpen = true;
@@ -3343,11 +3350,11 @@ async function renderMsftAuth(panel) {
   panel.innerHTML = '<div style="color:var(--text3);font-size:11px;">Starting sign-in…</div>';
   try {
     const r = await (await fetch('/msft/start-auth', { method:'POST' })).json();
-    if (r.error) { panel.innerHTML = '<div style="color:var(--danger-text);">' + r.error + '</div>'; return; }
+    if (r.error) { panel.innerHTML = '<div style="color:var(--danger-text);">' + esc(r.error) + '</div>'; return; }
     panel.innerHTML = `
       <div style="font-weight:600;margin-bottom:4px;">Sign in to Microsoft</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">1. Go to <strong>microsoft.com/devicelogin</strong><br>2. Enter this code:</div>
-      <div class="msft-code">${r.user_code}</div>
+      <div class="msft-code">${esc(r.user_code)}</div>
       <div style="font-size:11px;color:var(--text3);margin-top:4px;" id="msftAuthStatus">Waiting for sign-in…</div>
       <div style="display:flex;gap:6px;margin-top:8px;">
         <button class="msft-btn" onclick="openExternal('https://microsoft.com/devicelogin')" style="font-size:10px;">Open browser</button>
@@ -3390,7 +3397,7 @@ async function renderMsftSend(panel) {
   try {
     const r = await (await fetch('/msft/lists')).json();
     _msftLists = r.lists || [];
-    const opts = _msftLists.map(l => `<option value="${l.id}">${l.displayName}</option>`).join('');
+    const opts = _msftLists.map(l => `<option value="${esc(l.id)}">${esc(l.displayName)}</option>`).join('');
     panel.innerHTML = `
       <div style="font-weight:600;margin-bottom:5px;"><i class="ti ti-brand-windows"></i> Send ${openTodos.length} item${openTodos.length!==1?'s':''} to Microsoft To Do</div>
       <select class="msft-select" id="msftListSelect">${opts}</select>

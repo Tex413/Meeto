@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer, shell } = require('electron');
 const { execSync } = require('child_process');
 const path = require('path');
 
@@ -16,6 +16,8 @@ process.env.DATA_DIR = path.join(app.getPath('userData'), 'data');
 process.env.PORT = process.env.PORT || '7433';
 
 const PORT = parseInt(process.env.PORT);
+const APP_ORIGIN = `http://localhost:${PORT}`;
+const isAppUrl = u => typeof u === 'string' && (u === APP_ORIGIN || u.startsWith(APP_ORIGIN + '/'));
 
 // Free the port if a stale process is holding it (e.g. a leftover node server.js)
 function freePort(port) {
@@ -36,12 +38,14 @@ const { serverReady } = require('./server');
 let mainWindow;
 
 app.whenReady().then(async () => {
-  // Grant microphone (and camera) permission to the renderer
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(['media', 'microphone', 'camera', 'audioCapture'].includes(permission));
+  // Grant microphone (and camera) permission to the renderer — only to our own
+  // local app origin, never to any other page that might end up in a window.
+  const MEDIA_PERMS = ['media', 'microphone', 'camera', 'audioCapture'];
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(isAppUrl(wc && wc.getURL()) && MEDIA_PERMS.includes(permission));
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    return ['media', 'microphone', 'camera', 'audioCapture'].includes(permission);
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+    return isAppUrl(requestingOrigin) && MEDIA_PERMS.includes(permission);
   });
 
   // A/V recording: satisfy navigator.mediaDevices.getDisplayMedia() in the
@@ -60,8 +64,19 @@ app.whenReady().then(async () => {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
+  });
+
+  // Keep this window on the local app. window.open / target=_blank links go to
+  // the system browser (web URLs only); in-window navigation elsewhere is blocked.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (!isAppUrl(url)) e.preventDefault();
   });
 
   mainWindow.setMenuBarVisibility(false);

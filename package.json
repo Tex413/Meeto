@@ -18,16 +18,16 @@
     "docker:logs": "docker-compose logs -f"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "@mediapipe/tasks-vision": "^1.0.1",
     "@mintplex-labs/piper-tts-web": "^1.0.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@xenova/transformers": "^2.17.2",
     "mammoth": "^1.12.0",
-    "nodemailer": "^8.0.9",
+    "nodemailer": "^10.2.1",
     "pdf-parse": "^2.4.5",
     "sql.js": "^1.14.1",
     "stripe": "^14.0.0",
@@ -51,9 +51,9 @@
       "!.env*",
       "!ROADMAP.md",
       "!**/*.{md,map}",
-      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
-      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
-      "!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**"
+      "!node_modules/onnxruntime-node/bin/napi-*/darwin/**",
+      "!node_modules/onnxruntime-node/bin/napi-*/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-*/win32/arm64/**"
     ],
     "asarUnpack": [
       "**/*.node",
