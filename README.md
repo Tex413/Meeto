@@ -1,5 +1,7 @@
 # Meeto
 
+Help: [Meeteor manuals and Sulenna knowledge index](docs/kb/README.md).
+
 Real-time AI meeting assistant — self-hosted web service.
 
 ```
