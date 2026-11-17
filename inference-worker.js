@@ -12,7 +12,7 @@ const MODELS_DIR = workerData.modelsDir;
 let _tf = null;
 async function getTransformers() {
   if (_tf) return _tf;
-  _tf = await import('@xenova/transformers');
+  _tf = await import('@huggingface/transformers');
   _tf.env.cacheDir = MODELS_DIR;
   _tf.env.allowRemoteModels = true;
   return _tf;
@@ -37,7 +37,7 @@ let _whisper = null;
 async function getWhisper() {
   if (_whisper) return _whisper;
   const { pipeline } = await getTransformers();
-  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en', { quantized: true });
+  _whisper = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en', { dtype: 'q8' });
   return _whisper;
 }
 
@@ -45,7 +45,7 @@ let _embedder = null;
 async function getEmbedder() {
   if (_embedder) return _embedder;
   const { pipeline } = await getTransformers();
-  _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { quantized: true });
+  _embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' });
   return _embedder;
 }
 async function computeEmbedding(text) {
