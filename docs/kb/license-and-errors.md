@@ -1,6 +1,6 @@
 ---
 title: Resolve trial, AI, and microphone errors
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [troubleshooting, license, audio]
 applies_to: Trial dialog, Settings, live meeting screen

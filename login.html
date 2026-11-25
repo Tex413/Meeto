@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meetintel — Sign in</title>
+<title>Verbatimely — Sign in</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -197,7 +197,7 @@ input::placeholder { color: rgba(255,255,255,0.2); }
 <div class="card">
   <div class="logo">
     <span class="logo-icon">☄️</span>
-    <span class="logo-name">Meetintel</span>
+    <span class="logo-name">Verbatimely</span>
   </div>
 
   <div class="tab-row">
@@ -208,14 +208,14 @@ input::placeholder { color: rgba(255,255,255,0.2); }
   <!-- Login -->
   <div id="loginView">
     <h2>Welcome back</h2>
-    <p class="subtitle">Sign in to your Meetintel account.</p>
+    <p class="subtitle">Sign in to your Verbatimely account.</p>
     <label for="loginEmail">Email</label>
     <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()" />
     <label for="loginPwd">Password</label>
     <input type="password" id="loginPwd" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" />
     <p class="error" id="loginErr">Incorrect email or password.</p>
     <button class="btn" onclick="doLogin()" id="loginBtn">Sign in</button>
-    <p class="hint"><a href="/reset">Forgot password?</a> &nbsp;·&nbsp; <a href="/landing" target="_blank">Learn about Meetintel</a></p>
+    <p class="hint"><a href="/reset">Forgot password?</a> &nbsp;·&nbsp; <a href="/landing" target="_blank">Learn about Verbatimely</a></p>
   </div>
 
   <!-- Sign up -->

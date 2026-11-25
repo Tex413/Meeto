@@ -1,6 +1,6 @@
 ---
 title: Create and export action items
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [tasks, export]
 applies_to: To-dos panel

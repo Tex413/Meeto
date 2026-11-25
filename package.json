@@ -2,7 +2,7 @@
   "name": "meetintel",
   "version": "2.0.0",
   "description": "Real-time AI meeting assistant",
-  "author": "Meetintel",
+  "author": "Verbatimely",
   "main": "main.js",
   "scripts": {
     "start": "node server.js",
@@ -46,7 +46,7 @@
   },
   "build": {
     "appId": "io.meetintel.desktop",
-    "productName": "Meetintel",
+    "productName": "Verbatimely",
     "directories": {
       "output": "dist"
     },

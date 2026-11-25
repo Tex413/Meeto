@@ -1,6 +1,6 @@
 ---
 title: What is not available in this version?
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [limitations, privacy]
 applies_to: Settings and live meeting screen

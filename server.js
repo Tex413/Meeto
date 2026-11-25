@@ -204,7 +204,7 @@ const SESSION_MS = 8 * 60 * 60 * 1000;
 // ── local-only recording control (Stream Deck / MCP) ─────────────
 // Deliberately unauthenticated: this only ever lets a process on the SAME machine tell an
 // already-open, already-logged-in browser tab to start/stop listening. It is not reachable from
-// Meeto's hosted multi-user service - isLoopback() is the trust boundary, not a session cookie.
+// Verbatimely's hosted multi-user service - isLoopback() is the trust boundary, not a session cookie.
 const localEventClients = new Set();
 function isLoopback(req) {
   const addr = req.socket.remoteAddress || '';
@@ -316,9 +316,9 @@ async function sendResetEmail(toEmail, token) {
     await transporter.sendMail({
       from: loadEnvVar('SMTP_FROM') || 'noreply@meetintel.io',
       to: toEmail,
-      subject: 'Reset your Meetintel password',
+      subject: 'Reset your Verbatimely password',
       text: `Click this link to reset your password (expires in 1 hour):\n\n${url}\n\nIf you didn't request this, ignore this email.`,
-      html: `<p>Click below to reset your Meetintel password (expires in 1 hour):</p><p><a href="${url}">${url}</a></p><p style="color:#888;font-size:12px">If you didn't request this, ignore this email.</p>`
+      html: `<p>Click below to reset your Verbatimely password (expires in 1 hour):</p><p><a href="${url}">${url}</a></p><p style="color:#888;font-size:12px">If you didn't request this, ignore this email.</p>`
     });
     return { emailed: true };
   }
@@ -479,7 +479,7 @@ async function llmComplete(userId, { system, messages, max_tokens = 512 }) {
 // Whisper transcription and MiniLM embedding both run in a dedicated worker
 // thread (inference-worker.js) instead of inline here — that CPU-bound work
 // used to block this main thread for the duration of every call, stalling
-// every other route (including the "Meeteor" answer path) behind whatever
+// every other route (including the "Verbatimely" answer path) behind whatever
 // transcription happened to be in flight. Models are cached in the persistent
 // ./data volume so they download once.
 let _inferenceWorker = null;
@@ -882,7 +882,7 @@ async function fetchEnergyNews() {
   for (const url of ENERGY_NEWS_FEEDS) {
     if (items.length >= 10) break;
     try {
-      const { status, body } = await httpsGet(url, { 'User-Agent': 'Meetintel/1.0 (board-member energy ticker)' });
+      const { status, body } = await httpsGet(url, { 'User-Agent': 'Verbatimely/1.0 (board-member energy ticker)' });
       if (status !== 200) continue;
       items.push(...parseRssItems(body).slice(0, 6));
     } catch(e) { log('Energy news feed failed:', url, e.message); }
@@ -1074,7 +1074,7 @@ const server = http.createServer(async (req, res) => {
         mode: isAnnual ? 'subscription' : 'payment',
         line_items: [{ price_data: {
           currency: 'usd',
-          product_data: { name: isAnnual ? 'Meetintel Annual License' : 'Meetintel Lifetime License' },
+          product_data: { name: isAnnual ? 'Verbatimely Annual License' : 'Verbatimely Lifetime License' },
           unit_amount: isAnnual ? 2995 : 11900,
           ...(isAnnual ? { recurring: { interval: 'year' } } : {})
         }, quantity: 1 }],
@@ -1826,7 +1826,7 @@ const server = http.createServer(async (req, res) => {
 const serverReady = new Promise(resolve => {
   initDb().then(() => {
     server.listen(PORT, '0.0.0.0', () => {
-      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
+      log(`Verbatimely v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
       resolve();
       // Spawn the inference worker now so Whisper/embedder are warm (it logs
       // 'Inference worker ready' itself) before the first real request needs them.

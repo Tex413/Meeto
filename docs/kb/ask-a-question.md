@@ -1,6 +1,6 @@
 ---
-title: Ask Meeteor a spoken question
-product: Meeteor
+title: Ask Verbatimely a spoken question
+product: Verbatimely
 version: 2.1.0
 tags: [voice, questions, settings]
 applies_to: Settings and live meeting screen

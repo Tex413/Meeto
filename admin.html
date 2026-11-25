@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meetintel Admin</title>
+<title>Verbatimely Admin</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -145,7 +145,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div class="sidebar-logo">
       <div class="sidebar-logo-row">
         <span class="sidebar-logo-icon">☄️</span>
-        <span class="sidebar-logo-name">Meetintel</span>
+        <span class="sidebar-logo-name">Verbatimely</span>
       </div>
       <div style="margin-top:6px"><span class="sidebar-badge">Admin</span></div>
     </div>
@@ -199,7 +199,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <!-- Licenses -->
     <div class="page" id="page-licenses">
       <h2>License Keys</h2>
-      <p class="page-sub">Generate and verify Meetintel license keys.</p>
+      <p class="page-sub">Generate and verify Verbatimely license keys.</p>
 
       <div class="section">
         <div class="section-title">Generate Key</div>
@@ -225,7 +225,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <label for="verifyInput">License Key</label>
         <div class="row" style="align-items:flex-start">
           <div>
-            <input type="text" id="verifyInput" placeholder="MEETINTEL-..." style="margin-bottom:0" />
+            <input type="text" id="verifyInput" placeholder="Paste a license key" style="margin-bottom:0" />
           </div>
           <div class="btn-wrap" style="margin-bottom:0">
             <button class="btn btn-secondary" onclick="verifyKey()">Verify</button>
@@ -288,7 +288,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <div class="section">
         <div class="section-title">Danger Zone</div>
         <p style="font-size:13px; color:var(--text2); margin-bottom:16px;">Actions here cannot be undone.</p>
-        <button class="btn btn-secondary" style="color:var(--red); border-color:rgba(248,113,113,0.2);" onclick="confirmLogout()">Sign out of Meetintel</button>
+        <button class="btn btn-secondary" style="color:var(--red); border-color:rgba(248,113,113,0.2);" onclick="confirmLogout()">Sign out of Verbatimely</button>
       </div>
     </div>
 
@@ -416,7 +416,7 @@ async function saveLicenseSecret() {
 }
 
 function confirmLogout() {
-  if (!confirm('Sign out of Meetintel?')) return;
+  if (!confirm('Sign out of Verbatimely?')) return;
   fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/');
 }
 

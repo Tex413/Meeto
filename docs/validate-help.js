@@ -26,7 +26,7 @@ for (const name of articles) {
   for (const field of ['title', 'product', 'version', 'tags', 'applies_to']) {
     if (!new RegExp(`^${field}:\\s*\\S`, 'm').test(front[1])) failures.push(`${name}: missing ${field}`);
   }
-  if (!/^product: Meeteor\s*$/m.test(front[1])) failures.push(`${name}: wrong product`);
+  if (!/^product: Verbatimely\s*$/m.test(front[1])) failures.push(`${name}: wrong product`);
   if (!new RegExp(`^version: ${VERSION.replace(/\./g, '\\.')}\\s*$`, 'm').test(front[1])) {
     failures.push(`${name}: wrong version`);
   }
