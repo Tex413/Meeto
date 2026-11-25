@@ -1,6 +1,6 @@
-# Meeteor user manual
+# Verbatimely user manual
 
-Supported runtime: 2.1.0. The current screens and installer still say **Meetintel**. This manual describes the application in this repository; the owner's planned local meeting intelligence is not yet implemented.
+Supported runtime: 2.1.0. This manual describes the application in this repository; the owner's planned local meeting intelligence is not yet implemented.
 
 ## Open the app and sign in
 

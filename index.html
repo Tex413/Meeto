@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meetintel</title>
+<title>Verbatimely</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 <style>
 :root {
@@ -822,7 +822,7 @@ html, body {
     <!-- Brand -->
     <div class="tb-brand">
       <div class="brand-icon">☄️</div>
-      <span class="brand-name">Meetintel</span>
+      <span class="brand-name">Verbatimely</span>
     </div>
     <div class="topbar-sep"></div>
     <!-- Session -->
@@ -857,7 +857,7 @@ html, body {
     <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
     <div class="topbar-sep"></div>
     <!-- Board-member presence + BKV stock -->
-    <div class="presence-group" title="Meeteor">
+    <div class="presence-group" title="Verbatimely">
       <span class="camera-badge" id="cameraBadge"></span>
       <div class="presence-orb" id="presenceOrb" onclick="openPresenterView()" style="cursor:pointer" title="Click to expand for the room"></div>
       <button class="wake-badge" id="wakeBadge" onclick="openSettings()"></button>
@@ -1671,10 +1671,10 @@ async function init() {
   renderWakeBadge();
   prewarmPiper();
 
-  dbg('━━ Meetintel v' + APP_BUILD + ' ━━');
+  dbg('━━ Verbatimely v' + APP_BUILD + ' ━━');
   const bb = document.getElementById('buildBadge');
   if (bb) bb.textContent = 'v' + APP_BUILD;
-  dbg('Meetintel ready — provider=' + (_userSettings.provider || 'openai') +
+  dbg('Verbatimely ready — provider=' + (_userSettings.provider || 'openai') +
       ' model=' + (_userSettings.model || 'gpt-4o') +
       ' anthropicKey=' + (_userSettings.hasAnthropicKey ? '✓' : '✗') +
       ' tier=' + _userSettings.tier);
@@ -2189,7 +2189,7 @@ function stopPresenceAmpLoop() {
 }
 
 // Click the topbar orb to blow it up full-screen — meant for propping the
-// laptop up facing the room so the board can see Meeteor "listening" from
+// laptop up facing the room so the board can see Verbatimely "listening" from
 // across the table, where the 20px topbar version is invisible.
 function openPresenterView() {
   document.getElementById('presenterView')?.classList.add('open');
@@ -2307,8 +2307,8 @@ function stopRoomCamera() {
 
 function queueChunk(samples, isMe, nativeRate) {
   // Don't transcribe our own spoken answer — without this the mic picks the
-  // TTS playback back up, pollutes the transcript, and can re-trigger "meeteor".
-  if (_speaking) { dbg('Chunk: dropped (Meeteor is speaking)'); return; }
+  // TTS playback back up, pollutes the transcript, and can re-trigger the wake word.
+  if (_speaking) { dbg('Chunk: dropped (Verbatimely is speaking)'); return; }
   let energy = 0;
   for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
   const rms = Math.sqrt(energy / samples.length);
@@ -2464,7 +2464,7 @@ function pushTurn(text, isMe) {
 // turn-merging pushTurn() already does, rather than a second segmentation
 // pass: if the current turn keeps growing (the speaker is still talking),
 // the timer restarts; it only fires once the turn's gone quiet a moment.
-// Configurable (Settings) rather than hardcoded "Meeteor" — that's a made-up
+// Configurable (Settings) rather than hardcoded "Verbatimely" — that's a made-up
 // brand word Whisper has never seen in training data and mishears constantly,
 // especially with an accent; an ordinary name like "Craig" transcribes far
 // more reliably. Changing it takes effect immediately, no reload needed.
@@ -2605,7 +2605,7 @@ function dismissSuggestion() {
   addCards([{ tag: 'board-member', title: entity, body: summary }]); // silent record — never spoken
 }
 
-// Answers a question addressed directly to "Meeteor" — same RAG + live-ticker
+// Answers a question addressed directly to "Verbatimely" — same RAG + live-ticker
 // context maybeAnalyze() builds, but a short conversational answer (meant to
 // be spoken) instead of a JSON insight-card array.
 async function answerDirectQuestion(question) {
@@ -3162,7 +3162,7 @@ function showSetupCard() {
   const el = document.createElement('div');
   el.className = 'card';
   el.style.cssText = 'border-color:rgba(99,102,241,0.4)';
-  el.innerHTML = `<span class="tag" style="background:rgba(99,102,241,0.15);color:#6366f1">setup needed</span><div class="card-title">Add an API key to get started</div><div class="card-body">Meetintel needs an Anthropic or OpenAI key to generate insight cards. Your key is stored on this server only — never shared.<br><button id="_setupBtn" style="margin-top:8px;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.1);color:#6366f1;cursor:pointer">Open Settings →</button></div>`;
+  el.innerHTML = `<span class="tag" style="background:rgba(99,102,241,0.15);color:#6366f1">setup needed</span><div class="card-title">Add an API key to get started</div><div class="card-body">Verbatimely needs an Anthropic or OpenAI key to generate insight cards. Your key is stored on this server only — never shared.<br><button id="_setupBtn" style="margin-top:8px;font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.1);color:#6366f1;cursor:pointer">Open Settings →</button></div>`;
   el.querySelector('#_setupBtn').onclick = openSettings;
   area.appendChild(el);
 }
@@ -3434,17 +3434,17 @@ function exportTodosIcs() {
   const open = todos.filter(t => !t.done);
   if (!open.length) { alert('No open to-do items.'); return; }
   const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-  const title = document.getElementById('meetingTitle')?.value.trim() || 'Meetintel Tasks';
+  const title = document.getElementById('meetingTitle')?.value.trim() || 'Verbatimely Tasks';
   const vtodos = open.map((t, i) => [
     'BEGIN:VTODO',
-    'UID:meeteor-' + (Date.now() + i) + '@meeteor',
+    'UID:verbatimely-' + (Date.now() + i) + '@verbatimely',
     'DTSTAMP:' + now,
     icsFold('SUMMARY:' + icsEscape(t.text)),
     'STATUS:NEEDS-ACTION',
     'PRIORITY:5',
     'END:VTODO'
   ].join('\r\n')).join('\r\n');
-  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Meetintel//Tasks//1.0//EN\r\nCALSCALE:GREGORIAN\r\n' + vtodos + '\r\nEND:VCALENDAR\r\n';
+  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Verbatimely//Tasks//1.0//EN\r\nCALSCALE:GREGORIAN\r\n' + vtodos + '\r\nEND:VCALENDAR\r\n';
   const blob = new Blob([ics], { type: 'text/calendar' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3700,7 +3700,7 @@ init();
     <button class="btn-upgrade" onclick="window.open('/landing#pricing','_blank')">See pricing →</button>
     <p class="sub" style="text-align:center;margin-top:12px;margin-bottom:0">Already have a license key?</p>
     <div class="license-input-row">
-      <input type="text" id="licenseKeyInput" placeholder="MEETINTEL-..." />
+      <input type="text" id="licenseKeyInput" placeholder="Paste your license key" />
       <button id="activateLicenseBtn" onclick="activateLicense()">Activate</button>
     </div>
   </div>

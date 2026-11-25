@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Activate Meetintel</title>
+<title>Activate Verbatimely</title>
 <style>
   :root { --bg:#0b0f17; --surface:#131a26; --surface2:#1b2433; --border:#26303f; --text:#e8edf4; --text2:#9fb0c3; --text3:#6b7a8d; --accent:#3b82f6; --danger:#ef4444; --ok:#22c55e; }
   * { box-sizing: border-box; }
@@ -28,16 +28,16 @@
 <body>
   <div class="card">
     <div class="logo">☄️</div>
-    <h1>Activate Meetintel</h1>
+    <h1>Activate Verbatimely</h1>
     <p class="sub">Paste the license key from your purchase email to unlock the desktop app. Everything runs locally on this machine — no account needed.</p>
 
     <label for="key">License key</label>
-    <textarea id="key" placeholder="MEETINTEL2-..." autofocus spellcheck="false"></textarea>
+    <textarea id="key" placeholder="Paste your license key" autofocus spellcheck="false"></textarea>
     <button id="btn" onclick="activate()">Activate</button>
     <div id="msg" class="msg"></div>
 
     <div class="foot">
-      No license yet? <a href="https://meetintel.io/#pricing" target="_blank" rel="noopener">Buy Meetintel</a>
+      No license yet? <a href="https://meetintel.io/#pricing" target="_blank" rel="noopener">Buy Verbatimely</a>
       &nbsp;·&nbsp; Want to try first? <a href="https://meetintel.io" target="_blank" rel="noopener">Use the free web demo</a>.
     </div>
   </div>
@@ -56,7 +56,7 @@
         body: JSON.stringify({ key })
       });
       const d = await r.json();
-      if (r.ok && d.ok) { show('ok', 'Activated! Loading Meetintel…'); setTimeout(() => location.href = '/', 700); }
+      if (r.ok && d.ok) { show('ok', 'Activated! Loading Verbatimely…'); setTimeout(() => location.href = '/', 700); }
       else { show('err', d.error || 'Activation failed.'); $('btn').disabled = false; }
     } catch(e) { show('err', 'Could not reach the app. Try again.'); $('btn').disabled = false; }
   }

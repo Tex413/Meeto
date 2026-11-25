@@ -1,5 +1,5 @@
 // Runs Whisper transcription and MiniLM embedding off the main thread, so the
-// rest of the server (answering a "Meeteor" question, the ticker, SSE) stays
+// rest of the server (answering a "Verbatimely" question, the ticker, SSE) stays
 // responsive while a CPU-bound inference job is running. One dedicated worker,
 // not a pool — a single Whisper inference already uses onnxruntime-node's
 // internal multi-threading, so running two at once would contend for cores

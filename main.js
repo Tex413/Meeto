@@ -1,6 +1,7 @@
 const { app, BrowserWindow, session, desktopCapturer } = require('electron');
 const { execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 // Configure the embedded server for desktop mode BEFORE requiring it:
 //  - single local user, no login (DESKTOP_MODE)
@@ -10,6 +11,11 @@ process.env.DESKTOP_MODE = '1';
 // In an unpackaged dev build, relax license gates so the app is testable
 // without an active license.key. Packaged (production) builds stay gated.
 if (!app.isPackaged) process.env.DESKTOP_DEV = '1';
+// Electron derives userData from the app's name. Pin the original folder so the
+// rename never strands an existing user's database, license or saved settings.
+const userDataDir = path.join(app.getPath('appData'), 'meetintel');
+fs.mkdirSync(userDataDir, { recursive: true });
+app.setPath('userData', userDataDir);
 process.env.DATA_DIR = path.join(app.getPath('userData'), 'data');
 // Use a dedicated port so the desktop app never collides with the hosted
 // demo (which occupies 7432 via Docker on the dev machine).
@@ -56,7 +62,7 @@ app.whenReady().then(async () => {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
-    title: 'Meetintel',
+    title: 'Verbatimely',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

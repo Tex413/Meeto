@@ -1,6 +1,6 @@
-# Meeteor administrator guide
+# Verbatimely administrator guide
 
-Supported application runtime: **2.1.0** (`GET /version` in `server.js`). The package and Windows installer identify themselves as **Meetintel 2.0.0**; the Docker image and Compose service are named `meetintel`. These labels are present in the current repository and do not establish a separate release.
+Supported application runtime: **2.1.0** (`GET /version` in `server.js`). The Windows installer identifies itself as **Verbatimely 2.0.0**; the Docker image and Compose service are named `meetintel`. These labels are present in the current repository and do not establish a separate release.
 
 ## Install
 
@@ -22,7 +22,7 @@ The owner's planned LM Studio, Claude Code, and Codex selection is absent from t
 2. Select **License Keys**. Choose **Annual** or **Lifetime** under **Plan** and select **Generate** to issue a key. Use **Copy key** to transfer it through the approved license-delivery process. To check an existing key, enter it under **Verify Key** and select **Verify**.
 3. Select **Users** to review accounts and trial status. Use the row action to grant a lifetime license or initiate a password reset for the selected account. If SMTP is not configured, the screen lists pending reset links for an administrator to deliver through an approved private channel.
 4. Select **Stripe** to review integration status. The **Save Stripe config** control stores the configured key and webhook secret; obtain and enter them through the approved secret workflow. The screen identifies the checkout event needed by its webhook.
-5. Select **Settings** to manage the **License Secret**. Changing it invalidates previously issued license keys, so follow the approved key-rotation process before using **Save secret**. **Sign out of Meetintel** ends the admin session; **Back to App** returns to the application.
+5. Select **Settings** to manage the **License Secret**. Changing it invalidates previously issued license keys, so follow the approved key-rotation process before using **Save secret**. **Sign out of Verbatimely** ends the admin session; **Back to App** returns to the application.
 
 ## Upgrade
 

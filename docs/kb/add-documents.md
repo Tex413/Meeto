@@ -1,6 +1,6 @@
 ---
 title: Add a document for meeting context
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [documents, context]
 applies_to: Documents panel
@@ -12,4 +12,4 @@ Upload a supported file in **Documents** so its text can be used for document se
 ## Steps
 1. Expand **Documents** and select **Add**.
 2. Choose a `.txt`, `.md`, `.pdf`, `.docx`, `.html`, or `.htm` file.
-3. Confirm it appears in the list. Use **Remove** beside a file to delete it from this app.
+3. Confirm it appears in the list. Use **Remove** beside a file to delete it from this ap

@@ -1,6 +1,6 @@
 ---
-title: Ask Meeteor a spoken question
-product: Meeteor
+title: Ask Verbatimely a spoken question
+product: Verbatimely
 version: 2.1.0
 tags: [voice, questions, settings]
 applies_to: Settings and live meeting screen
@@ -15,4 +15,4 @@ Set a wake word, start listening with participant consent, and say the word foll
 3. Obtain participant consent, start a meeting, and select **Start listening**.
 4. Say the wake word followed by a question. Listen for the answer; select **Stop** to stop capture.
 
-This build has no text question box and does not guarantee a displayed citation for every answer.
+This build has no text question box and does not guarantee a displayed citation for every a
