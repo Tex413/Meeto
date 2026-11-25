@@ -1,6 +1,6 @@
 ---
 title: Use insight cards
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [cards, meeting]
 applies_to: Insight cards panel

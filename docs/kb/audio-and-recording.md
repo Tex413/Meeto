@@ -1,6 +1,6 @@
 ---
 title: Choose transcription and desktop recording
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [audio, desktop, troubleshooting]
 applies_to: Live meeting screen, desktop app

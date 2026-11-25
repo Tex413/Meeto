@@ -1,6 +1,7 @@
-# Meetintel — Product Plan & Roadmap
+# Verbatimely — Product Plan & Roadmap
 
 > Living plan. Last updated 2026-06-04. Source of truth for direction so work can resume after any interruption.
+> Renamed to Verbatimely on 2026-11-25; addresses and identifiers below are unchanged (see `docs/old-names.md`).
 
 ## TL;DR direction (LOCKED)
 
@@ -55,7 +56,7 @@ Pivot from "hosted multi-user SaaS" to:
 - TODO later: surface license status/deactivate in Settings; enforce `updatesUntil` for update-gating (currently any valid sig = licensed).
 
 ### Phase 3 — Installer  ✅ DONE (build config committed; artifact in dist/, gitignored)
-- `electron-builder` (NSIS) config in package.json `build`. Produces `dist/Meetintel Setup 2.0.0.exe` (~130 MB).
+- `electron-builder` (NSIS) config in package.json `build`. Produces `dist/Verbatimely Setup 2.0.0.exe` (~130 MB).
 - **No native rebuild needed:** `onnxruntime-node` ships **N-API (napi-v3)** binaries which load under Electron as-is → `npmRebuild: false`. `asarUnpack` puts onnxruntime (.node/.dll), sql.js `.wasm`, sharp into `app.asar.unpacked` (verified present). App files (main.js/server.js/*.html) confirmed inside the asar.
 - **Whisper model**: NOT bundled — downloads on first run to userData (`DATA_DIR/models`). Needs internet on first transcription.
 - **Build command:** `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` (or `npm run dist:dir` for a fast unpacked build at `dist/win-unpacked/`).
@@ -63,7 +64,7 @@ Pivot from "hosted multi-user SaaS" to:
 - **STILL TODO (owner inputs):**
   - 🎨 **App icon** — currently the default Electron icon. Add `build/icon.ico` and set `build.win.icon`.
   - 🛡️ **Code-signing** — currently unsigned → SmartScreen "unknown publisher" warning. Buy a cert (~$200–400/yr) and set `CSC_LINK`/`CSC_KEY_PASSWORD`, or ship unsigned to start.
-  - ✅ **Smoke test on the machine:** run the installer (or `dist/win-unpacked/Meetintel.exe`) → activate screen → paste a minted license → confirm transcription works (first-run model download).
+  - ✅ **Smoke test on the machine:** run the installer (or `dist/win-unpacked/Verbatimely.exe`) → activate screen → paste a minted license → confirm transcription works (first-run model download).
 
 ### Phase 4 — Site reframe + cap the demo
 - Rewrite `landing.html`: honest positioning (download the desktop app; **bring your own AI key** stated clearly), Features (real ones), **Roadmap** section for unbuilt/"cool" features, pricing ($69.99 one-time), "Try the demo" CTA → hosted app.

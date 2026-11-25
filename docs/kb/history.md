@@ -1,6 +1,6 @@
 ---
 title: Review or delete a past meeting
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [history, transcript, recording]
 applies_to: Meeting history panel

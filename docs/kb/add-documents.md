@@ -1,6 +1,6 @@
 ---
 title: Add a document for meeting context
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [documents, context]
 applies_to: Documents panel

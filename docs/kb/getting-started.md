@@ -1,6 +1,6 @@
 ---
-title: Get started with Meeteor
-product: Meeteor
+title: Get started with Verbatimely
+product: Verbatimely
 version: 2.1.0
 tags: [getting-started, account]
 applies_to: Sign-in screen and desktop app

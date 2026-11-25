@@ -1,6 +1,6 @@
 ---
 title: Start and end a meeting
-product: Meeteor
+product: Verbatimely
 version: 2.1.0
 tags: [meeting, transcript]
 applies_to: Live meeting screen

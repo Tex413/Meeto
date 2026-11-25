@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Mint a Meetintel desktop license key (Ed25519). Run on the OWNER's machine /
+// Mint a Verbatimely desktop license key (Ed25519). Run on the OWNER's machine /
 // checkout backend only — needs the PRIVATE key in keys/license-private.pem.
 //
 //   node tools/sign-license.js <plan> [email] [updatesDays]
