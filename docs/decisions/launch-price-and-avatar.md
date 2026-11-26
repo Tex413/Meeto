@@ -63,4 +63,5 @@ Approving a price does not make the product ready to sell:
 ## How to check
 
 - Prices in the code: search `unit_amount` in `server.js` and `pricing-price` in `landing.html`.
-- Licence mismatch: compare the key prefix in `generateLicenseKey` with the pattern in `verifyLicenseV2`.
+- Licence mismatch: task #22916 replaced the HMAC functions named above with Ed25519 signing in `license.js`;
+  `tests/license.node-test.js` covers it. Where the production signing key is held is still the owner's decision.

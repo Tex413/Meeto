@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const { Worker } = require('worker_threads');
+const { createLicensing, CHECKOUT_PRODUCT } = require('./license');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -686,46 +687,17 @@ function ensureUserSettings(userId) {
   if (!s) db.run(`INSERT INTO user_settings (user_id) VALUES (${userId})`);
 }
 
-// ── Stripe / license helpers ───────────────────────────────────
-function generateLicenseKey(type) {
-  const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
-  const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-  return `MEETINTEL-${payload}.${sig}`;
-}
-function verifyLicenseKey(key) {
-  try {
-    const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
-    const m = key.match(/^MEETINTEL-(.+)\.([A-Za-z0-9_-]+)$/);
-    if (!m) return null;
-    const [, payload, sig] = m;
-    const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-    if (sig !== expected) return null;
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  } catch(e) { return null; }
-}
-
 // ── Ed25519 desktop license (offline-verifiable; unforgeable) ──────
-// Keys are minted by the owner with the PRIVATE key (tools/sign-license.js);
-// the app verifies with this embedded PUBLIC key. Format:
-//   MEETINTEL2-<payloadB64url>.<ed25519SigB64url>
+// Keys are signed with the PRIVATE key (fulfilment server, or tools/sign-license.js);
+// the app verifies with this embedded PUBLIC key. Format and signing: license.js.
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAx2WzvIFxDl4HTErb8FJTlzLnP0cbB2KMd5K5S3N4IOM=
 -----END PUBLIC KEY-----`;
 const LICENSE_FILE = path.join(DATA_DIR, 'license.key');
 let _license = null; // cached verified payload (desktop only)
 
-function verifyLicenseV2(key) {
-  try {
-    const m = (key || '').trim().match(/^MEETINTEL2-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
-    if (!m) return null;
-    const [, payloadB64, sigB64] = m;
-    const ok = crypto.verify(null, Buffer.from(payloadB64),
-      crypto.createPublicKey(LICENSE_PUBLIC_KEY), Buffer.from(sigB64, 'base64url'));
-    if (!ok) return null;
-    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-  } catch(e) { return null; }
-}
+const licensing = createLicensing({ publicKey: LICENSE_PUBLIC_KEY });
+const verifyLicenseV2 = licensing.verify;
 function loadLicense() {
   try { if (fs.existsSync(LICENSE_FILE)) _license = verifyLicenseV2(fs.readFileSync(LICENSE_FILE, 'utf8')); }
   catch(e) { _license = null; }
@@ -1066,12 +1038,15 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const stripeKey = loadEnvVar('STRIPE_SECRET_KEY');
     if (!stripeKey) return json(res, 500, { error: 'Stripe not configured' });
+    // Never take a payment that cannot be fulfilled.
+    if (!licensing.signingReady()) return json(res, 503, { error: 'Checkout is not available yet' });
     try {
       const Stripe = require('stripe');
       const stripe = Stripe(stripeKey);
       const isAnnual = body.plan === 'annual';
       const session = await stripe.checkout.sessions.create({
         mode: isAnnual ? 'subscription' : 'payment',
+        metadata: { product: CHECKOUT_PRODUCT },
         line_items: [{ price_data: {
           currency: 'usd',
           product_data: { name: isAnnual ? 'Meetintel Annual License' : 'Meetintel Lifetime License' },
@@ -1094,10 +1069,8 @@ const server = http.createServer(async (req, res) => {
       try {
         const Stripe = require('stripe');
         const session = await Stripe(stripeKey).checkout.sessions.retrieve(sessionId);
-        if (session.payment_status === 'paid' || session.status === 'complete') {
-          planType = session.mode === 'subscription' ? 'annual' : 'lifetime';
-          licenseKey = generateLicenseKey(planType);
-        }
+        const issued = licensing.issueForCheckout(session);
+        if (issued) ({ key: licenseKey, plan: planType } = issued);
       } catch(e) { log('Stripe success error:', e.message); }
     }
     const html = fs.readFileSync(path.join(__dirname, 'success.html'), 'utf8')
@@ -1181,6 +1154,13 @@ const server = http.createServer(async (req, res) => {
   if (!user) return json(res, 401, { error: 'User not found' });
 
   // ── admin ────────────────────────────────────────────────────
+  // These routes mint licences and take over accounts: only the configured admin account may use
+  // them. Unset means nobody.
+  if (url === '/admin' || url.startsWith('/admin/')) {
+    const adminEmail = (process.env.MEETEOR_ADMIN_EMAIL || loadEnvVar('MEETEOR_ADMIN_EMAIL')).trim().toLowerCase();
+    if (!adminEmail || user.email !== adminEmail) return json(res, 403, { error: 'Administrator access required' });
+  }
+
   if (req.method === 'GET' && url === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
@@ -1204,7 +1184,7 @@ const server = http.createServer(async (req, res) => {
     const paid = db.exec("SELECT COUNT(*) FROM users WHERE tier='paid'")[0]?.values[0][0] || 0;
     let dbSize = 0; try { dbSize = fs.statSync(DB_FILE).size; } catch(e) {}
     return json(res, 200, { meetings: mtg, cards: crd, docs: doc, users: usr, paidUsers: paid, dbSize,
-      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'), licenseSecretSet: !!loadEnvVar('LICENSE_SECRET'),
+      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'), licenseSigningReady: licensing.signingReady(),
       uptime: Math.round(process.uptime()) });
   }
 
@@ -1227,9 +1207,13 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/admin/grant-license') {
     const body = JSON.parse(await readBody(req));
-    const { targetUserId, licenseType } = body;
-    const key = generateLicenseKey(licenseType || 'lifetime');
-    db.run(`UPDATE users SET tier='paid', license_key='${key}', license_type='${licenseType || 'lifetime'}' WHERE id = ${parseInt(targetUserId)}`);
+    const plan = body.licenseType === 'annual' ? 'annual' : 'lifetime';
+    const target = dbGet('SELECT id, email FROM users WHERE id = ?', [parseInt(body.targetUserId, 10) || 0]);
+    if (!target) return json(res, 404, { error: 'User not found' });
+    let key;
+    try { key = licensing.issue({ plan, email: target.email }); }
+    catch(e) { return json(res, 503, { error: e.message }); }
+    db.run('UPDATE users SET tier=\'paid\', license_key=?, license_type=? WHERE id=?', [key, plan, target.id]);
     saveDb();
     return json(res, 200, { ok: true, key });
   }
@@ -1240,7 +1224,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       stripeKey: sk ? sk.substring(0, 7) + '...' + sk.slice(-4) : '',
       webhookSecret: wh ? wh.substring(0, 6) + '...' : '',
-      licenseSecretSet: !!loadEnvVar('LICENSE_SECRET')
+      licenseSigningReady: licensing.signingReady()
     });
   }
 
@@ -1248,18 +1232,18 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     if (body.stripeKey) writeEnvVar('STRIPE_SECRET_KEY', body.stripeKey.trim());
     if (body.webhookSecret) writeEnvVar('STRIPE_WEBHOOK_SECRET', body.webhookSecret.trim());
-    if (body.licenseSecret) writeEnvVar('LICENSE_SECRET', body.licenseSecret.trim());
     return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/admin/generate-key') {
     const body = JSON.parse(await readBody(req));
-    return json(res, 200, { key: generateLicenseKey(body.type === 'annual' ? 'annual' : 'lifetime') });
+    try { return json(res, 200, { key: licensing.issue({ plan: body.type === 'annual' ? 'annual' : 'lifetime' }) }); }
+    catch(e) { return json(res, 503, { error: e.message }); }
   }
 
   if (req.method === 'POST' && url === '/admin/verify-key') {
     const body = JSON.parse(await readBody(req));
-    const info = verifyLicenseKey(body.key || '');
+    const info = verifyLicenseV2(body.key || '');
     return json(res, 200, info ? { valid: true, ...info } : { valid: false });
   }
 
@@ -1390,11 +1374,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/license/activate') {
     const body = JSON.parse(await readBody(req));
-    const info = verifyLicenseKey(body.key || '');
+    const info = verifyLicenseV2(body.key || '');
     if (!info) return json(res, 400, { error: 'Invalid license key' });
-    db.run(`UPDATE users SET tier='paid', license_key='${body.key.replace(/'/g, "''")}', license_type='${info.type}' WHERE id = ${userId}`);
+    db.run('UPDATE users SET tier=\'paid\', license_key=?, license_type=? WHERE id=?', [body.key.trim(), info.plan, userId]);
     saveDb();
-    return json(res, 200, { ok: true, type: info.type });
+    return json(res, 200, { ok: true, type: info.plan });
   }
 
   if (req.method === 'GET' && url === '/trial/status') {

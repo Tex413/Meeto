@@ -225,7 +225,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <label for="verifyInput">License Key</label>
         <div class="row" style="align-items:flex-start">
           <div>
-            <input type="text" id="verifyInput" placeholder="MEETINTEL-..." style="margin-bottom:0" />
+            <input type="text" id="verifyInput" placeholder="MEETINTEL2-..." style="margin-bottom:0" />
           </div>
           <div class="btn-wrap" style="margin-bottom:0">
             <button class="btn btn-secondary" onclick="verifyKey()">Verify</button>
@@ -273,17 +273,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <!-- Settings -->
     <div class="page" id="page-settings">
       <h2>Settings</h2>
-      <p class="page-sub">App configuration and license secret management.</p>
-
-      <div class="section">
-        <div class="section-title">License Secret</div>
-        <p style="font-size:13px; color:var(--text2); margin-bottom:14px; line-height:1.6;">
-          The license secret is used to sign and verify all license keys. Keep this value secret and constant — changing it will invalidate all previously issued keys.
-        </p>
-        <label for="licenseSecretInput">License Secret</label>
-        <input type="password" id="licenseSecretInput" placeholder="Enter a strong random secret..." />
-        <button class="btn btn-primary" onclick="saveLicenseSecret()">Save secret</button>
-      </div>
+      <p class="page-sub">App configuration.</p>
 
       <div class="section">
         <div class="section-title">Danger Zone</div>
@@ -339,7 +329,7 @@ async function loadStats() {
   const cf = document.getElementById('configStatus');
   cf.innerHTML = [
     `<span class="pill ${r.stripeConfigured ? 'ok' : 'warn'}">Stripe ${r.stripeConfigured ? 'configured' : 'not configured'}</span>`,
-    `<span class="pill ${r.licenseSecretSet ? 'ok' : 'warn'}">License secret ${r.licenseSecretSet ? 'set' : 'not set'}</span>`
+    `<span class="pill ${r.licenseSigningReady ? 'ok' : 'warn'}">License signing ${r.licenseSigningReady ? 'ready' : 'not ready'}</span>`
   ].join('');
 }
 
@@ -349,7 +339,8 @@ async function generateKey() {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ type })
   }).then(r => r.json());
-  genKey = r.key || '';
+  if (!r.key) { toast(r.error || 'Could not generate a key.', 6000); return; }
+  genKey = r.key;
   const el = document.getElementById('genKeyOutput');
   el.classList.remove('empty');
   el.textContent = genKey;
@@ -371,9 +362,9 @@ async function verifyKey() {
   const el = document.getElementById('verifyResult');
   el.style.display = '';
   if (r.valid) {
-    const issued = new Date(r.issued).toLocaleString();
+    const issued = new Date(r.purchasedAt).toLocaleString();
     el.className = 'verify-result valid';
-    el.textContent = `Valid ${r.type} license — issued ${issued}`;
+    el.textContent = `Valid ${r.plan} license — issued ${issued}`;
   } else {
     el.className = 'verify-result invalid';
     el.textContent = 'Invalid or tampered license key.';
@@ -402,17 +393,6 @@ async function saveStripe() {
   document.getElementById('webhookInput').value = '';
   toast('Stripe config saved.');
   loadStripeStatus();
-}
-
-async function saveLicenseSecret() {
-  const licenseSecret = document.getElementById('licenseSecretInput').value.trim();
-  if (!licenseSecret) { toast('Enter a secret first.'); return; }
-  await fetch('/admin/save-config', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ licenseSecret })
-  });
-  document.getElementById('licenseSecretInput').value = '';
-  toast('License secret saved.');
 }
 
 function confirmLogout() {
@@ -474,6 +454,7 @@ async function loadResetLinks() {
 
 async function grantLicense(userId, type) {
   const r = await fetch('/admin/grant-license', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ targetUserId: userId, licenseType: type }) }).then(r=>r.json());
+  if (!r.key) { toast(r.error || 'Could not grant a license.', 6000); return; }
   toast('License granted — key: ' + r.key.substring(0, 24) + '…');
   loadUsers();
 }
