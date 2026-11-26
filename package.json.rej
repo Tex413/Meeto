@@ -1,0 +1,10 @@
+diff a/package.json b/package.json	(rejected hunks)
+@@ -12,7 +12,7 @@
+     "desktop": "electron main.js",
+     "dist": "electron-builder --win",
+     "dist:dir": "electron-builder --win --dir",
+-    "build": "node --check server.js && node --check main.js && node --check preload.js && node --check inference-worker.js && node --check mcp-server.js",
++    "build": "node --check server.js && node --check main.js && node --check preload.js && node --check inference-worker.js && node --check mcp-server.js && node --check log-redaction.js && node --check meeting-delete.js && node --check local-control.js",
+     "test": "node --test tests/*.node-test.js",
+     "verify": "npm run build && npm test",
+     "docker:build": "docker build -t meetintel .",
