@@ -30,12 +30,13 @@ server.registerTool(
   'start_meeting_recording',
   {
     title: 'Start meeting recording',
-    description: 'Starts recording/transcribing in the Meeto desktop app already open on this machine.',
+    description: 'Asks the Meeto app already open on this machine to start transcribing. It cannot give '
+      + 'meeting consent: without a consent record the app only opens the prompt and captures nothing.',
   },
   async () => {
     try {
       await postLocal('/api/local/start-recording');
-      return toolResult('Meeto recording started.');
+      return toolResult('Start requested. Capture begins only if consent is recorded for this meeting on screen.');
     } catch (err) {
       return toolError(err);
     }

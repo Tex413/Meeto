@@ -701,6 +701,24 @@ html, body {
 }
 .settings-key-status { font-size: 11px; color: var(--green); margin-top: 3px; font-weight: 500; }
 
+/* ── Meeting consent ── */
+.consent-overlay { z-index: 1200; }
+.consent-overlay .overlay-card { max-width: 560px; max-height: 100%; overflow-y: auto; }
+.consent-draft { font-size: 11px; font-weight: 700; color: var(--warn-text); margin-bottom: 8px; }
+.consent-text { font-size: 15px; line-height: 1.6; margin-bottom: 12px; }
+.consent-status { font-size: 12px; color: var(--text2); margin: 10px 0; }
+.consent-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-bottom: 10px; cursor: pointer; }
+.capture-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 2000;
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 99px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5); font-size: 12px; font-weight: 600;
+  max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center;
+}
+.capture-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text3); }
+.capture-bar.on { border-color: #ef4444; }
+.capture-bar.on .capture-dot { background: #ef4444; animation: pulse 1.5s infinite; }
+
 .paywall-icon { font-size: 44px; text-align: center; margin-bottom: 16px; }
 .paywall-features { list-style: none; margin-bottom: 22px; }
 .paywall-features li { font-size: 13px; padding: 5px 0; color: var(--text2); display: flex; align-items: center; gap: 8px; }
@@ -852,7 +870,7 @@ html, body {
     <button class="btn small" onclick="clearAll()" title="Clear all"><i class="ti ti-trash" aria-hidden="true"></i></button>
     <button class="btn small" onclick="testAI()" title="Test AI connection" id="testAIBtn"><i class="ti ti-plug" aria-hidden="true"></i> Test AI</button>
     <button class="btn small" onclick="toggleDbg()" title="Debug log"><i class="ti ti-bug" aria-hidden="true"></i></button>
-    <button class="btn small" onclick="toggleRoomCamera()" id="cameraToggleBtn" title="Enable room camera — presence/hand-raise detection only, ephemeral, nothing ever recorded or sent anywhere"><i class="ti ti-camera" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="toggleRoomCamera()" id="cameraToggleBtn" style="display:none" title="Enable room camera — presence/hand-raise detection only, ephemeral, nothing ever recorded or sent anywhere"><i class="ti ti-camera" aria-hidden="true"></i></button>
     <button class="btn small" onclick="openSettings()" title="Settings"><i class="ti ti-settings" aria-hidden="true"></i></button>
     <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
     <div class="topbar-sep"></div>
@@ -1042,6 +1060,7 @@ html, body {
       <div class="hist-tab-content" id="histCards"></div>
       <div class="hist-tab-content" id="histTranscript" style="display:none;white-space:pre-wrap;font-size:12px;color:var(--text2);"></div>
       <div class="hist-tab-content" id="histRecording" style="display:none;">
+        <select id="histPart" class="mic-select" style="display:none;margin-bottom:8px;" onchange="showRecordingPart(this.value)" aria-label="Recording part"></select>
         <video id="histVideo" controls preload="metadata" style="width:100%;border-radius:8px;background:#000;"></video>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
           <button class="btn small" id="genTranscriptBtn" onclick="generateTranscriptFromRecording()"><i class="ti ti-file-text" aria-hidden="true"></i> Generate transcript</button>
@@ -1057,9 +1076,41 @@ html, body {
   </div>
 </div>
 
+<!-- Capture indicator: on screen the whole time anything is captured, above every overlay -->
+<div class="capture-bar" id="captureBar" role="status" style="display:none">
+  <span class="capture-dot"></span>
+  <span id="captureText"></span>
+  <button class="btn small" id="lateArrivalBtn" onclick="lateArrival()" title="Stops capture and announces again; capture restarts only if everyone agrees">Someone joined</button>
+  <button class="btn small danger" id="withdrawBtn" onclick="withdrawConsent()">Withdraw consent · stop all capture</button>
+</div>
+
+<!-- Meeting consent prompt (lib/consent-prompt.js) -->
+<div class="overlay consent-overlay" id="consentOverlay" style="display:none">
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+    <button class="overlay-close" id="consentCloseBtn" title="Close (capture stays off)">×</button>
+    <h3 id="consentTitle">Consent before capture</h3>
+    <p class="consent-draft" id="consentDraft"></p>
+    <p class="consent-text" id="consentText"></p>
+    <p class="sub" id="consentClipNote" style="display:none">For A/V recording, the microphone records only this announcement and the answers, so they are part of the recording. The clip is discarded if anyone declines. Counsel has not approved this step.</p>
+    <button class="btn small" id="consentPlayBtn">Speak again</button>
+    <p class="consent-status" id="consentStatus" aria-live="polite"></p>
+    <label class="consent-check" id="consentReadRow"><input type="checkbox" id="consentReadAloud"> I read the whole announcement aloud to everyone present</label>
+    <label class="consent-check"><input type="checkbox" id="consentEveryone"> Everyone present heard it and agreed</label>
+    <div class="settings-row">
+      <label for="consentConfirmer">Your name (who is confirming)</label>
+      <input type="text" id="consentConfirmer" maxlength="120" autocomplete="off">
+    </div>
+    <button class="btn-upgrade" id="consentAgreeBtn" disabled>Record consent and start capture</button>
+    <button class="btn small" id="consentDeclineBtn" style="width:100%;justify-content:center;">Decline · capture stays off</button>
+  </div>
+</div>
+
+<script src="/consent-client.js"></script>
+<script src="/consent-prompt.js"></script>
 <script>
 const APP_BUILD = '__BUILD__';
 const IS_DESKTOP = ('__DESKTOP__' === '1');   // injected by server; A/V recording is desktop-only
+const ROOM_CAMERA_ENABLED = ('__ROOM_CAMERA__' === '1');   // off in sold builds pending counsel
 let listening = false;
 let transcript_final = '';
 let audioCtx = null, micStream = null, workletNode = null;
@@ -1118,8 +1169,107 @@ function updateTerse(val) {
 let currentMeetingId = null;
 let autoSaveTimer = null;
 let currentHistMeetingId = null;
+let _meetingEnded = false;
+
+// ── meeting consent (rules: lib/consent-client.js, server: lib/consent-gate.js) ──
+async function consentFetch(url, body) {
+  const r = await fetch(url, body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    : undefined);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+const consentPrompt = ConsentPrompt.createConsentPrompt({
+  speak: ConsentPrompt.createSpeaker({
+    synthesize: async text => (await getPiper()).predict({ text, voiceId: PIPER_VOICE }),
+    setSpeaking: on => { _speaking = on; setPresenceState(on ? 'speaking' : listening ? 'listening' : 'idle'); }
+  }),
+  onCaptureChange: () => updateCaptureIndicator()
+});
+
+const consent = ConsentClient.createConsentController({
+  api: {
+    preview: (meetingId, modes) => consentFetch('/consent/preview?meetingId=' + meetingId + '&modes=' + modes.join(',')),
+    grant: body => consentFetch('/consent/grant', body),
+    withdraw: (meetingId, reason) => consentFetch('/consent/withdraw', { meetingId, reason })
+  },
+  prompt: consentPrompt,
+  stopCapture: stopAllCapture,
+  isRecording: () => _recording,
+  onError: message => { dbg(message); alert(message); }
+});
+
+// Resolves to null when capture must stay off. Consent belongs to a meeting, so one is
+// started first if none is active.
+async function ensureConsent(mode) {
+  if (!currentMeetingId) await startMeeting();
+  if (!currentMeetingId) return null;
+  const granted = await consent.ensure(currentMeetingId, [mode]);
+  updateCaptureIndicator();
+  return granted;
+}
+
+function stopAllCapture() {
+  stopListen();
+  stopRecord();
+  if (_cameraStarting) _cameraStopRequested = true;
+  if (_cameraStream) stopRoomCamera();
+  updateCaptureIndicator();
+}
+
+async function withdrawConsent() {
+  await consent.withdraw('withdrawn', currentMeetingId);
+  updateCaptureIndicator();
+}
+
+function activeModes() {
+  return [listening && _listenMode, _recording && 'recording', _cameraStream && 'camera'].filter(Boolean);
+}
+
+async function restartCapture(modes, clip) {
+  if (modes.includes('recording')) await startRecord(clip);
+  const listenMode = modes.find(mode => mode === 'microphone' || mode === 'webspeech');
+  if (listenMode) { setSttMode(listenMode === 'webspeech' ? 'webspeech' : 'whisper'); await startListen(); }
+  if (modes.includes('camera')) await startRoomCamera();
+}
+
+// A late arrival, or meeting data going somewhere new: stop, then ask again.
+async function reaskConsent(reason, change) {
+  await consent.reask(reason, { activeModes: activeModes(), restart: restartCapture, change });
+  updateCaptureIndicator();
+}
+
+function lateArrival() { return reaskConsent('late_arrival'); }
+
+// Meeting text leaves the page for an AI provider or Microsoft only while consent is live.
+function mayShareMeetingText() { return !!consent.current(); }
+
+// Driven by the open devices themselves, not by button state.
+function updateCaptureIndicator() {
+  const bar = document.getElementById('captureBar');
+  if (!bar) return;
+  const isLive = stream => !!stream && stream.getTracks().some(t => t.readyState === 'live');
+  const capturing = [
+    consentPrompt.clipLive() && 'consent announcement clip',
+    isLive(micStream) && 'microphone',
+    recognition && listening && 'Web Speech (cloud)',
+    _rec && _rec.captures.some(isLive) && 'screen and audio recording',
+    isLive(_cameraStream) && 'camera'
+  ].filter(Boolean);
+  const record = consent.current();
+  bar.style.display = capturing.length || record ? '' : 'none';
+  bar.classList.toggle('on', capturing.length > 0);
+  document.getElementById('captureText').textContent = capturing.length
+    ? 'Capturing: ' + capturing.join(', ')
+    : 'Consent recorded · nothing is being captured';
+  document.getElementById('lateArrivalBtn').style.display = record ? '' : 'none';
+}
 
 async function startMeeting() {
+  // Text captured in an earlier meeting must not be saved or shared under this one's consent.
+  if (_meetingEnded) { _meetingEnded = false; clearAll(); }
   const title = document.getElementById('meetingTitle').value.trim()
     || 'Meeting ' + new Date().toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
   const ctx = document.getElementById('ctx').value.trim();
@@ -1158,6 +1308,8 @@ async function autoSave() {
 async function endMeeting() {
   if (!currentMeetingId) return;
   clearInterval(autoSaveTimer);
+  consent.end();   // stops all capture (and uploads any A/V recording); consent ends with the meeting
+  _meetingEnded = true;
   try {
     await fetch('/meeting/end', {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1174,8 +1326,7 @@ async function endMeeting() {
     document.getElementById('endMeetingBtn').style.display = 'none';
     document.getElementById('meetingTitle').value = '';
     currentMeetingId = null;
-    if (listening) stopListen();
-    if (_recording) stopRecord();   // flush + upload any in-progress A/V recording
+    updateCaptureIndicator();
   } catch(e) { console.error('End meeting failed:', e); }
 }
 
@@ -1183,80 +1334,114 @@ async function endMeeting() {
 // Captures the screen + system audio (other participants) via getDisplayMedia
 // and mixes in the local mic (system audio doesn't include your own voice).
 // The combined stream is recorded to webm and streamed to disk on the server.
-let _recorder = null, _recChunks = [], _recording = false;
-let _recDisplayStream = null, _recMicStream = null, _recMixStream = null, _recAudioCtx = null;
-let _recMeetingId = null;
+// _rec holds the running recording; each one keeps its own chunks and consent record, so
+// a restart cannot clobber a recording that is still uploading.
+let _rec = null, _recording = false, _recStarting = false;
 
 function toggleRecord() { return _recording ? stopRecord() : startRecord(); }
 
-async function startRecord() {
+// clip: the announcement clip, passed in when consent was just given again.
+async function startRecord(clip = null) {
   if (!IS_DESKTOP) { alert('A/V recording is available in the desktop app.'); return; }
-  // A recording must attach to a meeting; start one if none is active.
-  if (!currentMeetingId) { await startMeeting(); }
-  if (!currentMeetingId) return;   // start failed (e.g. paywall)
-
+  if (_recording || _recStarting) return;
+  _recStarting = true;
   try {
-    _recDisplayStream = await navigator.mediaDevices.getDisplayMedia({
+    if (!clip) {
+      // A recording must attach to a meeting; ensureConsent starts one if none is active.
+      const granted = await ensureConsent('recording');
+      if (!granted) return;
+      clip = granted.clip;
+    }
+    if (clip && consent.current()) await openRecording(clip);
+  } finally { _recStarting = false; updateCaptureIndicator(); }
+}
+
+async function openRecording(clip) {
+  const meetingId = currentMeetingId;
+  const consentId = consent.current().consentId;
+  const live = consent.ticket('recording', meetingId);
+  const rec = { meetingId, consentId, chunks: [], captures: [], audioCtx: null, recorder: null, clipDone: null };
+  const abandon = () => {
+    rec.captures.forEach(s => s.getTracks().forEach(t => t.stop()));
+    if (rec.audioCtx) rec.audioCtx.close().catch(() => {});
+  };
+
+  // The announcement and answer go into the recording itself; without them, no recording.
+  let announcement;
+  try {
+    rec.audioCtx = new AudioContext();
+    announcement = await rec.audioCtx.decodeAudioData(await clip.arrayBuffer());
+  } catch(e) { abandon(); alert('Recording did not start: the announcement clip could not be read. ' + e.message); return; }
+  if (!live()) return abandon();
+
+  let display;
+  try {
+    display = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 15 },
       audio: true            // system audio (Electron 'loopback' on Windows)
     });
-  } catch(e) { dbg('Screen capture cancelled: ' + e.message); return; }
+  } catch(e) { dbg('Screen capture cancelled: ' + e.message); return abandon(); }
+  rec.captures.push(display);
+  if (!live()) return abandon();
 
-  // Mix system audio + mic into a single track.
+  // Mix the announcement, system audio and mic into a single track.
+  let mic = null;
   try {
-    _recMicStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch(e) { _recMicStream = null; dbg('Recording without mic: ' + e.message); }
+    mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    rec.captures.push(mic);
+  } catch(e) { dbg('Recording without mic: ' + e.message); }
+  await rec.audioCtx.resume();
+  if (!live()) return abandon();
 
-  const sysAudio = _recDisplayStream.getAudioTracks();
-  let audioTrack = null;
-  if (_recMicStream || sysAudio.length) {
-    _recAudioCtx = new AudioContext();
-    const dest = _recAudioCtx.createMediaStreamDestination();
-    if (sysAudio.length) _recAudioCtx.createMediaStreamSource(new MediaStream(sysAudio)).connect(dest);
-    if (_recMicStream) _recAudioCtx.createMediaStreamSource(_recMicStream).connect(dest);
-    audioTrack = dest.stream.getAudioTracks()[0];
-  }
+  const mix = rec.audioCtx.createMediaStreamDestination();
+  const sysAudio = display.getAudioTracks();
+  if (sysAudio.length) rec.audioCtx.createMediaStreamSource(new MediaStream(sysAudio)).connect(mix);
+  if (mic) rec.audioCtx.createMediaStreamSource(mic).connect(mix);
+  const announcementSource = rec.audioCtx.createBufferSource();
+  announcementSource.buffer = announcement;
+  announcementSource.connect(mix);
 
-  const videoTrack = _recDisplayStream.getVideoTracks()[0];
-  const tracks = [videoTrack];
-  if (audioTrack) tracks.push(audioTrack);
-  else sysAudio.forEach(t => tracks.push(t));
-  _recMixStream = new MediaStream(tracks);
-
+  const videoTrack = display.getVideoTracks()[0];
   const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
     .find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
-  _recChunks = [];
-  _recorder = new MediaRecorder(_recMixStream, { mimeType: mime, videoBitsPerSecond: 2500000 });
-  _recorder.ondataavailable = e => { if (e.data && e.data.size) _recChunks.push(e.data); };
-  _recorder.onstop = onRecordStop;
+  rec.recorder = new MediaRecorder(new MediaStream([videoTrack, mix.stream.getAudioTracks()[0]]),
+    { mimeType: mime, videoBitsPerSecond: 2500000 });
+  rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  rec.recorder.onstop = () => onRecordStop(rec);
   // If the user ends screen-share from the OS/Electron UI, stop cleanly.
-  videoTrack.addEventListener('ended', () => { if (_recording) stopRecord(); });
+  videoTrack.addEventListener('ended', () => { if (_rec === rec) stopRecord(); });
 
-  _recorder.start(1000);   // emit a chunk each second
+  rec.recorder.start(1000);   // emit a chunk each second
+  rec.clipDone = new Promise(resolve => { announcementSource.onended = resolve; });
+  announcementSource.start();
+  _rec = rec;
   _recording = true;
-  _recMeetingId = currentMeetingId;
   updateRecordUI('on');
   dbg('Recording started (' + mime + ')');
 }
 
 function stopRecord() {
-  if (!_recorder || !_recording) return;
+  const rec = _rec;
+  if (!rec || !_recording) return;
   _recording = false;
+  _rec = null;
   updateRecordUI('saving');
-  try { _recorder.stop(); } catch(e) {}
+  // Capture devices close at once. The recorder itself finishes only after the stored
+  // announcement has been written into the file.
+  rec.captures.forEach(s => s.getTracks().forEach(t => t.stop()));
+  rec.clipDone.then(() => { if (rec.recorder.state !== 'inactive') rec.recorder.stop(); });
+  updateCaptureIndicator();
 }
 
-async function onRecordStop() {
-  // Tear down every stream/context we opened.
-  [_recDisplayStream, _recMicStream].forEach(s => s && s.getTracks().forEach(t => t.stop()));
-  if (_recMixStream) _recMixStream.getTracks().forEach(t => t.stop());
-  if (_recAudioCtx) { try { await _recAudioCtx.close(); } catch(e) {} }
+async function onRecordStop(rec) {
+  rec.captures.forEach(s => s.getTracks().forEach(t => t.stop()));
+  try { await rec.audioCtx.close(); } catch(e) { /* already closed */ }
 
-  const blob = new Blob(_recChunks, { type: (_recorder && _recorder.mimeType) || 'video/webm' });
-  _recChunks = [];
+  const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || 'video/webm' });
+  rec.chunks = [];
   dbg('Recording stopped: ' + Math.round(blob.size / 1048576 * 10) / 10 + ' MB — uploading');
   try {
-    const r = await fetch('/recording/upload?meetingId=' + _recMeetingId, {
+    const r = await fetch('/recording/upload?meetingId=' + rec.meetingId + '&consentId=' + rec.consentId, {
       method: 'POST',
       headers: { 'Content-Type': blob.type || 'video/webm' },
       body: blob
@@ -1266,8 +1451,8 @@ async function onRecordStop() {
     else dbg('Recording upload failed: ' + (d.error || r.status));
   } catch(e) { dbg('Recording upload error: ' + e.message); }
 
-  _recorder = null; _recDisplayStream = null; _recMicStream = null; _recMixStream = null; _recAudioCtx = null;
-  updateRecordUI('off');
+  if (!_recording) updateRecordUI('off');
+  updateCaptureIndicator();
 }
 
 function updateRecordUI(state) {
@@ -1297,7 +1482,8 @@ async function generateTranscriptFromRecording() {
   setGenProgress(0, 'Loading recording…');
 
   try {
-    const resp = await fetch('/recording/' + meetingId);
+    // The part now in the player (a meeting has one per consent record).
+    const resp = await fetch(document.getElementById('histVideo').getAttribute('src') || '/recording/' + meetingId);
     if (!resp.ok) throw new Error('recording not available');
     const ab = await (await resp.blob()).arrayBuffer();
 
@@ -1318,9 +1504,13 @@ async function generateTranscriptFromRecording() {
       const resampled = await resampleTo16k(slice, rate);
       const r = await fetch('/transcribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE, context: ctxText })
+        body: JSON.stringify({
+          meetingId, source: 'recording',
+          audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE, context: ctxText
+        })
       });
       if (r.status === 402) { setGenProgress(Math.round(c / total * 100), 'License required'); openPaywall(); return; }
+      if (r.status === 403) throw new Error('this meeting has no recording made with consent');
       const d = await r.json().catch(() => ({}));
       const clean = (d.text || '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
       if (clean) transcript += clean + ' ';
@@ -1478,6 +1668,14 @@ async function loadMeetingDetail(id, title) {
     if (d.meeting.recording_path) {
       recTab.style.display = '';
       vid.src = '/recording/' + id;
+      const parts = (d.consents || []).filter(c => c.recording_path);
+      const partSelect = document.getElementById('histPart');
+      partSelect.style.display = parts.length > 1 ? '' : 'none';
+      partSelect.innerHTML = parts.map((c, i) =>
+        `<option value="${esc(c.id)}">Recording part ${i + 1} · consent ${new Date(c.granted_at).toLocaleTimeString()}</option>`
+      ).join('');
+      const latest = parts.find(c => c.recording_path === d.meeting.recording_path);
+      if (latest) partSelect.value = latest.id;
     } else {
       recTab.style.display = 'none';
       vid.removeAttribute('src'); vid.load();
@@ -1485,6 +1683,10 @@ async function loadMeetingDetail(id, title) {
   } catch(e) {
     document.getElementById('histCards').innerHTML = '<p style="color:var(--danger-text);font-size:12px;">Error loading.</p>';
   }
+}
+
+function showRecordingPart(consentId) {
+  document.getElementById('histVideo').src = '/recording/' + currentHistMeetingId + '?part=' + encodeURIComponent(consentId);
 }
 
 function showTab(tab) {
@@ -1563,6 +1765,7 @@ function renderTodos() {
 }
 
 async function aiExtractTodos() {
+  if (!mayShareMeetingText()) { alert('Meeting text is sent to AI only while consent is recorded. Start listening to announce and ask first.'); return; }
   const transcript = (transcript_final || '').trim();
   if (wordCount(transcript) < 20) { alert('Not enough transcript yet — speak more first.'); return; }
   const btn = document.querySelector('.todo-ai-btn');
@@ -1682,6 +1885,9 @@ async function init() {
   // Transcription runs locally (offline Whisper) — no key needed.
   setSttMode('whisper');
 
+  if (ROOM_CAMERA_ENABLED) document.getElementById('cameraToggleBtn').style.display = '';
+  setInterval(updateCaptureIndicator, 1000);   // catches devices closed from outside the page
+
   // A/V recording is a desktop-only feature (recordings stored on local disk).
   if (IS_DESKTOP) { const rb = document.getElementById('recordBtn'); if (rb) rb.style.display = ''; }
 
@@ -1741,13 +1947,27 @@ function onAudioSettingChange() {
   }
 }
 
+let _listenStarting = false;
+let _listenMode = null;   // the consent mode of the running listener
+
 async function startListen() {
-  if (sttMode === 'webspeech') await startWebSpeech();
-  else await startWhisper();
+  if (listening || _listenStarting) return;
+  _listenStarting = true;
+  try {
+    const mode = sttMode === 'webspeech' ? 'webspeech' : 'microphone';
+    if (!await ensureConsent(mode)) return;   // nothing opens without consent
+    const live = consent.ticket(mode, currentMeetingId);
+    if (!live()) return;
+    _listenMode = mode;
+    if (mode === 'webspeech') await startWebSpeech(live);
+    else await startWhisper(live);
+  } finally { _listenStarting = false; updateCaptureIndicator(); }
 }
 
 // Open mic + set up visualiser. Returns raw source node or null on failure.
-async function initAudioGraph() {
+// live() turns false if consent ends while the device is opening.
+async function initAudioGraph(live) {
+  let stream;
   try {
     const deviceId = document.getElementById('micSelect').value;
     const constraints = {
@@ -1757,14 +1977,18 @@ async function initAudioGraph() {
     };
     if (deviceId) constraints.deviceId = { exact: deviceId };
     dbg('Mic constraints: echo=' + constraints.echoCancellation + ' noise=' + constraints.noiseSuppression + ' agc=' + constraints.autoGainControl);
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false });
   } catch(e) {
     alert('Microphone access denied: ' + e.message);
     return null;
   }
+  if (!live()) { stream.getTracks().forEach(t => t.stop()); return null; }
+  micStream = stream;
+  updateCaptureIndicator();
   populateMicList();
   audioCtx = new AudioContext();
-  await audioCtx.resume();
+  await audioCtx.resume().catch(e => dbg('AudioContext resume failed: ' + e.message));
+  if (!live()) return null;   // stopAllCapture has already closed the stream and context
   dbg('AudioContext state: ' + audioCtx.state + '  sampleRate: ' + audioCtx.sampleRate);
 
   const source = audioCtx.createMediaStreamSource(micStream);
@@ -1831,18 +2055,20 @@ function dbg(msg) {
   while (log.children.length > 50) log.removeChild(log.lastChild);
 }
 
-async function startWebSpeech() {
+async function startWebSpeech(live) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert('Web Speech API not available in this browser. Switch to Whisper.'); return; }
 
   // Viz (best-effort — Web Speech manages its own mic internally)
-  initAudioGraph();
+  await initAudioGraph(live);
+  if (!live()) return;
 
   recognition = new SR();
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = 'en-US';
   recognition.onresult = ev => {
+    if (!live()) return;
     let interimText = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       if (ev.results[i].isFinal) {
@@ -1865,7 +2091,7 @@ async function startWebSpeech() {
     if (ev.error === 'network') {
       dbg('Web Speech: Electron does not support Web Speech API (requires Chrome with Google keys) — switching to Whisper');
       stopListen();
-      setTimeout(() => { setSttMode('whisper'); startWhisper(); }, 200);
+      setTimeout(() => { setSttMode('whisper'); startListen(); }, 200);   // a new mode asks again
       return;
     }
   };
@@ -1889,9 +2115,9 @@ async function startWebSpeech() {
   startCountdown();
 }
 
-async function startWhisper() {
-  const source = await initAudioGraph();
-  if (!source) return;
+async function startWhisper(live) {
+  const source = await initAudioGraph(live);
+  if (!source || !live()) return;
 
   _sampleBuf = [];
   _silentSamplesRun = 0;
@@ -2005,6 +2231,7 @@ function stopListen() {
   b.innerHTML = '<i class="ti ti-microphone" aria-hidden="true"></i> Start listening';
   b.classList.remove('danger');
   document.getElementById('countdown').textContent = '';
+  updateCaptureIndicator();
 }
 
 // Remote start/stop from a local, same-machine controller (Stream Deck tile, MCP tool, etc.) via
@@ -2013,8 +2240,9 @@ function stopListen() {
 // click could race.
 function initLocalControlChannel() {
   const source = new EventSource('/api/local/events');
+  // Remote start never gives consent: without a record, startListen only opens the prompt.
   source.addEventListener('start-recording', () => { if (!listening) startListen(); });
-  source.addEventListener('stop-recording', () => { if (listening) stopListen(); });
+  source.addEventListener('stop-recording', () => { consent.cancelPrompt(); if (listening) stopListen(); });
   source.onerror = () => dbg('Local control channel disconnected - EventSource will auto-retry');
 }
 
@@ -2226,8 +2454,12 @@ async function toggleRoomCamera() {
 }
 
 async function startRoomCamera() {
+  if (!ROOM_CAMERA_ENABLED || _cameraStarting || _cameraStream) return;
   _cameraStarting = true;
   _cameraStopRequested = false;
+  // A withdrawal or decline sets _cameraStopRequested through stopAllCapture.
+  const granted = await ensureConsent('camera');
+  if (!granted || _cameraStopRequested) { _cameraStarting = false; return; }
   try {
     _cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
   } catch(e) {
@@ -2240,7 +2472,9 @@ async function startRoomCamera() {
   _cameraVideo = document.createElement('video');   // never inserted into the page — no on-screen preview
   _cameraVideo.muted = true;
   _cameraVideo.srcObject = _cameraStream;
-  await _cameraVideo.play();
+  updateCaptureIndicator();
+  try { await _cameraVideo.play(); }
+  catch(e) { dbg('Camera video did not start: ' + e.message); _cameraStopRequested = true; }
   if (_cameraStopRequested) { stopRoomCamera(); _cameraStarting = false; return; }
 
   _cameraCanvas = document.createElement('canvas');
@@ -2302,6 +2536,7 @@ function stopRoomCamera() {
   const badge = document.getElementById('cameraBadge');
   if (badge) badge.style.display = 'none';
   document.getElementById('cameraToggleBtn')?.classList.remove('danger');
+  updateCaptureIndicator();
   dbg('Room camera disabled');
 }
 
@@ -2387,19 +2622,34 @@ async function processChunkQueue() {
     try {
       dbg('Transcribing ' + samples.length + ' samples @ ' + nativeRate + ' Hz → resampling to 16kHz');
       const resampled = await resampleTo16k(samples, nativeRate);
+      const live = consent.ticket('microphone', currentMeetingId);
+      if (!live()) continue;   // consent ended: the audio is dropped, not sent
+      const consentId = consent.current().consentId;
       const resp = await fetch('/transcribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE, context: (document.getElementById('ctx')?.value || '') })
+        body: JSON.stringify({
+          meetingId: currentMeetingId, consentId,
+          audio: encodeAudioBase64(resampled), sampleRate: CAPTURE_RATE, context: (document.getElementById('ctx')?.value || '')
+        })
       });
-      if (resp.status === 402) { stopListen(); openPaywall(); return; }
+      if (resp.status === 402) { stopListen(); openPaywall(); break; }
+      if (resp.status === 403) {
+        if (!live() || consent.current().consentId !== consentId) continue;
+        // The server refused a record this page believes is live: the destination changed.
+        const d = await resp.json().catch(() => ({}));
+        await consent.withdraw('destination_changed');
+        alert('Capture stopped. ' + (d.message || 'Consent is required.'));
+        break;
+      }
       if (!resp.ok) {
         const d = await resp.json().catch(() => ({}));
         stopListen();
         showApiError(d.message || d.error || ('Transcription error (HTTP ' + resp.status + ')'));
-        return;
+        break;
       }
       const { text } = await resp.json();
       await loadUserSettings(); // refresh trial counter
+      if (!live()) continue;
       dbg('Whisper result: ' + JSON.stringify(text));
       const clean = (text || '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
       if (wordCount(clean) >= 1) {
@@ -2512,7 +2762,7 @@ function checkForAddressTrigger() {
 let researchedEntities = new Set();
 
 async function extractEntities(recentText) {
-  if (!currentMeetingId || _userSettings.provider !== 'anthropic') return;
+  if (!currentMeetingId || !mayShareMeetingText() ||_userSettings.provider !== 'anthropic') return;
   try {
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2543,6 +2793,7 @@ async function researchEntity(entity) {
       if (INJECTION_MODE === 'suggest-approve') showSuggestion(entity, cd.summary);
       return;
     }
+    if (!mayShareMeetingText()) return;
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2639,6 +2890,7 @@ ${ctx ? 'CONTEXT:\n' + ctx : ''}${ragContext}${intelContext}${await meetingCompe
 Answer in 1-3 short sentences, conversationally — this will be read aloud, so no markdown, no bullet points, no code blocks. If you don't have enough information to answer confidently, say so briefly rather than guessing.`;
 
   let answer;
+  if (!mayShareMeetingText()) { setPresenceState(listening ? 'listening' : 'idle'); return; }
   try {
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2726,6 +2978,7 @@ async function refineTurns(includeLast) {
   _refining = true;
   try {
     for (const i of jobs) {
+      if (!mayShareMeetingText()) break;
       const original = turnChunks[i];
       try {
         const resp = await fetch('/transcribe/refine', {
@@ -2791,7 +3044,7 @@ async function testAI() {
 
 async function maybeAnalyze() {
   refineTurns();            // refine settled turns on the analysis cadence (fire-and-forget)
-  if (analysisRunning) return;
+  if (analysisRunning || !mayShareMeetingText()) return;
   const newWords = transcript_final.slice(lastSent.length).trim();
   const nw = wordCount(newWords);
   if (nw < 12) { dbg('Analysis skipped — only ' + nw + ' new words (need 12)'); return; }
@@ -2884,6 +3137,7 @@ For code in body, use: \n\`\`\`python\ncode here\n\`\`\`
 For multiple cards keep them focused — better one deep card than three shallow ones.
 If nothing noteworthy, return [].`;
 
+  if (!mayShareMeetingText()) { removeThinking(); analysisRunning = false; return; }
   try {
     const resp = await fetch('/proxy', {
       method: 'POST',
@@ -3365,6 +3619,7 @@ function startMsftPoll(deviceCode, interval) {
       if (r.status === 'authenticated') {
         stopMsftPoll();
         document.getElementById('msftBtnLabel').textContent = 'Connected';
+        reaskConsent('destination_changed');   // Microsoft is a new destination
         renderMsftSend(document.getElementById('msftPanel'));
       } else if (r.status === 'error') {
         stopMsftPoll();
@@ -3405,6 +3660,10 @@ async function renderMsftSend(panel) {
 async function sendToMsft() {
   const listId = document.getElementById('msftListSelect')?.value;
   if (!listId) return;
+  if (transcript_final.trim() && !mayShareMeetingText()) {
+    alert('Tasks from a captured meeting go to Microsoft only while consent is recorded.');
+    return;
+  }
   const tasks = todos.filter(t => !t.done).map(t => t.text);
   const btn = document.querySelector('#msftPanel .msft-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
@@ -3457,7 +3716,7 @@ function exportTodosIcs() {
 }
 
 async function disconnectMsft() {
-  await fetch('/msft/disconnect', { method:'POST' });
+  await reaskConsent('destination_changed', () => fetch('/msft/disconnect', { method:'POST' }));
   document.getElementById('msftBtnLabel').textContent = 'To Do';
   await renderMsftPanel();
 }
@@ -3585,10 +3844,16 @@ async function saveSettings() {
   const im = document.getElementById('settingsInjectionMode').value;
   INJECTION_MODE = im; localStorage.setItem('injectionMode', im);
   renderWakeBadge();
-  await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  await loadUserSettings();
-  btn.disabled = false; btn.textContent = 'Save';
-  closeSettings();
+  const store = async () => {
+    await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    await loadUserSettings();
+    btn.disabled = false; btn.textContent = 'Save';
+    closeSettings();
+  };
+  // A new provider or key can send meeting data somewhere new: stop before saving, then ask again.
+  const newDestination = body.provider !== _userSettings.provider || !!ak || !!ok;
+  if (newDestination) await reaskConsent('destination_changed', store);
+  else await store();
 }
 
 function openPaywall() {
