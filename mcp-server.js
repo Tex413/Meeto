@@ -7,9 +7,12 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 
 const MEETO_BASE_URL = (process.env.MEETO_BASE_URL || 'http://127.0.0.1:7432').replace(/\/$/, '');
+// Must match the server's LOCAL_CONTROL_TOKEN when the server has one.
+const LOCAL_CONTROL_TOKEN = process.env.LOCAL_CONTROL_TOKEN || '';
 
 async function postLocal(path) {
-  const res = await fetch(`${MEETO_BASE_URL}${path}`, { method: 'POST' });
+  const headers = LOCAL_CONTROL_TOKEN ? { Authorization: `Bearer ${LOCAL_CONTROL_TOKEN}` } : {};
+  const res = await fetch(`${MEETO_BASE_URL}${path}`, { method: 'POST', headers });
   if (!res.ok) {
     throw new Error(`Meeto responded ${res.status} ${res.statusText} for ${path}`);
   }
