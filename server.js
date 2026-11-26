@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const { Worker } = require('worker_threads');
+const consentGate = require('./lib/consent-gate');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -32,6 +33,11 @@ const ENV_FILE = path.join(DATA_DIR, '.env');
 const TRIAL_SECONDS = 20 * 60;
 const TRIAL_MAX_DOCS = 2;
 const TRIAL_DELETE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Off in every sold build until counsel answers (docs/decisions/consent-legal-review.md).
+const ROOM_CAMERA_ENABLED = consentGate.roomCameraEnabled(
+  { env: process.env, desktop: DESKTOP_MODE, desktopDev: DESKTOP_DEV });
+const CONSENT_SCRIPTS = new Set(['/consent-client.js', '/consent-prompt.js']);
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
@@ -142,6 +148,8 @@ async function initDb() {
     expires_at TEXT
   )`);
 
+  consents.migrate();
+
   // migrations for existing DBs
   const migrate = sql => { try { db.run(sql); } catch(e) {} };
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
@@ -196,6 +204,24 @@ function dbGet(sql, params = []) {
   const row = {}; r[0].columns.forEach((c, i) => row[c] = r[0].values[0][i]);
   return row;
 }
+
+// ── meeting consent gate (lib/consent-gate.js) ─────────────────
+const consents = consentGate.createConsentStore({ getDb: () => db, save: saveDb });
+
+function consentDestination(userId) {
+  const settings = dbGet(
+    `SELECT ai_provider, anthropic_key, openai_key, msft_tokens FROM user_settings WHERE user_id = ${userId}`);
+  return consentGate.destinationFor({ settings, desktop: DESKTOP_MODE });
+}
+
+const handleConsent = consentGate.createConsentRouter({
+  store: consents,
+  sendJson: json,
+  readBody,
+  ownsMeeting: (meetingId, userId) => !!dbGet(`SELECT id FROM meetings WHERE id = ${meetingId} AND user_id = ${userId}`),
+  getDestination: consentDestination,
+  cameraEnabled: ROOM_CAMERA_ENABLED,
+});
 
 // ── session auth ───────────────────────────────────────────────
 const sessions = new Map(); // token → { userId, expiry }
@@ -275,7 +301,10 @@ function cleanupExpiredTrials() {
   for (const [userId] of r[0].values) {
     const mids = db.exec(`SELECT id FROM meetings WHERE user_id = ${userId}`);
     if (mids.length && mids[0].values.length) {
-      for (const [mid] of mids[0].values) db.run(`DELETE FROM cards WHERE meeting_id = ${mid}`);
+      for (const [mid] of mids[0].values) {
+        db.run(`DELETE FROM cards WHERE meeting_id = ${mid}`);
+        consents.remove(mid, userId);
+      }
     }
     db.run(`DELETE FROM meetings WHERE user_id = ${userId}`);
     const dids = db.exec(`SELECT id FROM documents WHERE user_id = ${userId}`);
@@ -925,6 +954,11 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(__dirname, 'landing.html'), 'utf8'));
   }
 
+  if (req.method === 'GET' && CONSENT_SCRIPTS.has(url)) {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'lib', url.slice(1)), 'utf8'));
+  }
+
   // Serves a static file from a vendored npm package's dist directory —
   // client-side libraries we host ourselves rather than depending on a CDN
   // for our own JS (Piper TTS, MediaPipe vision). Blocks path traversal.
@@ -1170,7 +1204,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, htmlHdr);
     return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
       .replace(/__BUILD__/g, `${VERSION} build ${BUILD}`)
-      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0'));
+      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0')
+      .replace(/__ROOM_CAMERA__/g, ROOM_CAMERA_ENABLED ? '1' : '0'));
   }
 
   // ── all routes below require auth ────────────────────────────
@@ -1179,6 +1214,8 @@ const server = http.createServer(async (req, res) => {
 
   const user = dbGet(`SELECT * FROM users WHERE id = ${userId}`);
   if (!user) return json(res, 401, { error: 'User not found' });
+
+  if (await handleConsent(req, res, userId)) return;
 
   // ── admin ────────────────────────────────────────────────────
   if (req.method === 'GET' && url === '/admin') {
@@ -1435,6 +1472,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
       [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
+    consents.close(Number(body.id) || 0, userId, 'meeting_ended');   // consent never outlives its meeting
     saveDb(); return json(res, 200, { ok: true });
   }
 
@@ -1447,13 +1485,19 @@ const server = http.createServer(async (req, res) => {
     if (!meetingId) return json(res, 400, { error: 'missing meetingId' });
     const own = dbGet(`SELECT id FROM meetings WHERE id=${meetingId} AND user_id=${userId}`);
     if (!own) return json(res, 404, { error: 'meeting not found' });
-    const filename = `meeting-${meetingId}.webm`;
+    const consentId = new URL(req.url, 'http://x').searchParams.get('consentId') || '';
+    const consent = consents.uploadable(meetingId, userId, consentId);
+    if (!consent) {
+      return json(res, 403, { error: 'consent_required', message: 'No consent record covers this recording.' });
+    }
+    // One file per consent record: a re-announcement must not overwrite the earlier part.
+    const filename = `meeting-${meetingId}-${consent.id}.webm`;
     const dest = path.join(RECORDINGS_DIR, filename);
     const ws = fs.createWriteStream(dest);
     req.pipe(ws);
     ws.on('finish', () => {
       db.run(`UPDATE meetings SET recording_path=? WHERE id=${meetingId}`, [filename]);
-      saveDb();
+      consents.saveRecording(consent.id, filename);   // also saves the database
       let size = 0; try { size = fs.statSync(dest).size; } catch(e) {}
       log(`Recording saved: ${dest} (${Math.round(size/1024/1024*10)/10} MB)`);
       return json(res, 200, { ok: true, path: filename, bytes: size });
@@ -1468,7 +1512,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.startsWith('/recording/')) {
     if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
     const id = parseInt(url.split('/')[2]);
-    const row = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    const part = new URL(req.url, 'http://x').searchParams.get('part');
+    const row = part
+      ? consents.find(id || 0, userId, part)
+      : dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
     if (!row || !row.recording_path) return json(res, 404, { error: 'no recording' });
     const file = path.join(RECORDINGS_DIR, row.recording_path);
     if (!fs.existsSync(file)) return json(res, 404, { error: 'file missing' });
@@ -1533,16 +1580,19 @@ const server = http.createServer(async (req, res) => {
     const meeting = {}; m[0].columns.forEach((col, i) => meeting[col] = m[0].values[0][i]);
     const cardCols = c.length ? c[0].columns : [];
     const cards = c.length ? c[0].values.map(r => { const card = {}; cardCols.forEach((col, i) => card[col] = r[i]); return card; }) : [];
-    return json(res, 200, { meeting, cards });
+    return json(res, 200, { meeting, cards, consents: consents.list(id, userId) });
   }
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
     const id = parseInt(url.split('/')[2]);
     // Remove the recording file too (scoped to the user's own meeting).
     const own = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    if (own && own.recording_path) {
-      try { fs.unlinkSync(path.join(RECORDINGS_DIR, own.recording_path)); } catch(e) {}
+    const files = new Set(consents.recordings(id || 0, userId).map(record => record.recording_path));
+    if (own && own.recording_path) files.add(own.recording_path);
+    for (const file of files) {
+      try { fs.unlinkSync(path.join(RECORDINGS_DIR, file)); } catch(e) {}
     }
+    consents.remove(id || 0, userId);
     db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
     db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
     saveDb(); return json(res, 200, { ok: true });
@@ -1620,7 +1670,13 @@ const server = http.createServer(async (req, res) => {
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     const body = JSON.parse(await readBody(req));
-    const { audio, sampleRate = 16000, context = '' } = body;
+    const { audio, sampleRate = 16000, context = '', consentId = '', source = 'live' } = body;
+    const consentRefusal = (inFlight) => consents.transcriptionRefusal({
+      meetingId: Number(body.meetingId) || 0, userId, consentId: String(consentId), source,
+      destinationKey: consentDestination(userId).key, inFlight,
+    });
+    const refused = consentRefusal(false);
+    if (refused) return json(res, 403, { error: 'consent_required', message: refused });
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
       const buf = Buffer.from(audio, 'base64');
@@ -1633,6 +1689,9 @@ const server = http.createServer(async (req, res) => {
       // The buffer is transferred (zero-copy), not cloned; audioData itself is
       // detached and unusable on this thread after this call.
       const { text: whisperText } = await runInWorker('transcribe', { audioData, sampleRate }, [audioData.buffer]);
+      // Consent withdrawn while this was transcribing: keep nothing and log nothing.
+      const withdrawn = consentRefusal(true);
+      if (withdrawn) return json(res, 403, { error: 'consent_required', message: withdrawn });
       const raw = whisperText || '';
       // local "grammar file": fuzzy-correct toward the user's domain vocabulary
       const text = correctTranscript(raw, context);

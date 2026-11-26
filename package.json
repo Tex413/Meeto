@@ -12,7 +12,7 @@
     "desktop": "electron main.js",
     "dist": "electron-builder --win",
     "dist:dir": "electron-builder --win --dir",
-    "build": "node --check server.js && node --check main.js && node --check preload.js && node --check inference-worker.js && node --check mcp-server.js",
+    "build": "node --check server.js && node --check main.js && node --check preload.js && node --check inference-worker.js && node --check mcp-server.js && node --check lib/consent-gate.js && node --check lib/consent-client.js && node --check lib/consent-prompt.js",
     "test": "node --test tests/*.node-test.js",
     "verify": "npm run build && npm test",
     "docker:build": "docker build -t meetintel .",
