@@ -12,9 +12,15 @@ For a source installation, install the Node dependencies with `npm ci --no-audit
 
 `PORT` changes the server port. `PUBLIC_URL`, falling back to `APP_URL`, is used when constructing external reset and checkout links. `DATA_DIR` selects the directory for the SQLite database, uploaded documents, models, recordings, log, environment file, and license file. Compose sets these to 7432 and `/app/data` and defaults `PUBLIC_URL` to the value in `docker-compose.yml`; set a deployment-specific URL when external links are needed.
 
-The application's Settings dialog lets each user select the currently implemented OpenAI or Anthropic provider, model, and associated key. The admin screen (`/admin`, available to administrator accounts) has Overview, License Keys, Users, Stripe, and Settings pages. It can generate or verify keys, grant a lifetime license, initiate a user password reset, and save Stripe configuration and a license signing secret. Handle all secret values through the approved vault workflow; this guide intentionally gives names only. The password-reset mailer reads `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` from `DATA_DIR/.env`. Stripe and license-signing configuration can also be entered in the admin screen. `tools/sign-license.js` is a signing utility; use it only with the approved secret-handling procedure.
+The application's Settings dialog lets each user select the OpenAI, Anthropic, or LM Studio provider, and a model and key for the first two. The admin screen (`/admin`, available to administrator accounts) has Overview, License Keys, Users, Stripe, and Settings pages. It can generate or verify keys, grant a lifetime license, initiate a user password reset, and save Stripe configuration and a license signing secret. Handle all secret values through the approved vault workflow; this guide intentionally gives names only. The password-reset mailer reads `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` from `DATA_DIR/.env`. Stripe and license-signing configuration can also be entered in the admin screen. `tools/sign-license.js` is a signing utility; use it only with the approved secret-handling procedure.
 
-The owner's planned LM Studio, Claude Code, and Codex selection is absent from the current Settings control. Do not advertise a fully local AI backend or zero outbound meeting data for this build.
+For LM Studio, set these in the server environment or `DATA_DIR/.env`:
+
+- `LMSTUDIO_MODEL` (required): the identifier of the model loaded in LM Studio.
+- `LMSTUDIO_URL`: the server address. The default is `http://localhost:1234/v1`; the Docker image defaults to `http://host.docker.internal:1234/v1`, which is LM Studio on the Docker host. For LM Studio on another machine, use its address and turn on **Serve on Local Network** there. The app refuses an address that is not on this machine or a private network.
+- `LMSTUDIO_TIMEOUT_MS` (optional, default 120000) and `LMSTUDIO_REASONING_EFFORT` (optional; try `none` if a reasoning model returns no answer text).
+
+Restart the application after changing the environment. LM Studio authentication tokens are not supported. Claude Code and Codex are not selectable. Do not advertise a local build or zero outbound meeting data until the gate in [the pre-sale decision](decisions/local-ai-backend-pre-sale.md) has passed.
 
 ## Use the admin console
 

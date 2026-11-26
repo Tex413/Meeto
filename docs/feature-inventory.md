@@ -21,4 +21,4 @@ This inventory maps the current source to customer help. A route used only by a 
 
 ## Unverified or absent from this build
 
-The charter's LM Studio, Claude Code, and Codex backend selector, enforced consent gate, per-answer citations, plan and slide generation, and cross-meeting project memory have no matching user control or enforcement path in the inspected screens and server. They are excluded from task instructions and described as limitations where they affect safe use. Sulenna ingestion and answer checks require a separate operational step after these files land.
+LM Studio is selectable in Settings (`lib/ai-backend.js`); its local-claim gate has not passed. The charter's Claude Code and Codex backends, enforced consent gate, per-answer citations, plan and slide generation, and cross-meeting project memory have no matching user control or enforcement path in the inspected screens and server. They are excluded from task instructions and described as limitations where they affect safe use. Sulenna ingestion and answer checks require a separate operational step after these files land.

@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const { Worker } = require('worker_threads');
+const { createLmStudioBackend, envFileValue, LOCAL_PROVIDER, PROVIDERS } = require('./lib/ai-backend');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -448,13 +449,28 @@ function proxyOpenAI(anthropicBody, openaiKey, model) {
   });
 }
 
+function readLmStudioSetting(name) {
+  if (process.env[name]) return process.env[name];
+  try { return envFileValue(fs.readFileSync(ENV_FILE, 'utf8'), name); } catch { return ''; } // no data/.env yet
+}
+const lmStudio = createLmStudioBackend({ readSetting: readLmStudioSetting });
+
+// With the local backend selected, the app itself refuses features that send meeting data to a cloud service.
+function isLocalOnly(userId) {
+  return dbGet(`SELECT ai_provider FROM user_settings WHERE user_id = ${userId}`)?.ai_provider === LOCAL_PROVIDER;
+}
+
 // Run one LLM completion through the user's configured provider/key.
-// Returns assistant text, or null on any failure (caller falls back gracefully).
+// Returns assistant text, or null on any cloud failure (caller falls back gracefully).
+// LM Studio failures throw instead, so the user sees them.
 // Forces a cheap model for cost control unless the user already runs a cheap one.
 async function llmComplete(userId, { system, messages, max_tokens = 512 }) {
   const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key FROM user_settings WHERE user_id = ${userId}`);
   if (!s) return null;
   const provider = s.ai_provider || 'openai';
+  if (provider === LOCAL_PROVIDER) {
+    return (await lmStudio.complete({ system, messages, max_tokens })).content[0].text;
+  }
   const body = JSON.stringify({ system, messages, max_tokens });
   const CHEAP_ANTHROPIC = 'claude-haiku-4-5-20251001', CHEAP_OPENAI = 'gpt-4o-mini';
   try {
@@ -656,6 +672,8 @@ function graphRequest(tokens, method, apiPath, body) {
 }
 const graphGet = (t, p) => graphRequest(t, 'GET', p, null);
 const graphPost = (t, p, b) => graphRequest(t, 'POST', p, b);
+// The routes that contact Microsoft; status, client ID and disconnect stay local.
+const MSFT_CLOUD_ROUTES = new Set(['/msft/start-auth', '/msft/poll-auth', '/msft/lists', '/msft/create-tasks']);
 
 async function getValidMsftTokens(userId) {
   const s = dbGet(`SELECT msft_tokens, msft_client_id FROM user_settings WHERE user_id = ${userId}`);
@@ -1268,9 +1286,12 @@ const server = http.createServer(async (req, res) => {
     ensureUserSettings(userId);
     const s = dbGet(`SELECT ai_provider, ai_model, anthropic_key, openai_key, eia_api_key FROM user_settings WHERE user_id = ${userId}`);
     const ts = trialStatus(user);
+    const localOnly = s?.ai_provider === LOCAL_PROVIDER;
     return json(res, 200, {
       provider: s?.ai_provider || 'openai',
-      model: s?.ai_model || 'gpt-4o',
+      model: localOnly ? lmStudio.model() : (s?.ai_model || 'gpt-4o'),
+      localOnly,
+      lmStudioModel: lmStudio.model(),
       hasAnthropicKey: !!(s?.anthropic_key) || (s?.openai_key || '').startsWith('sk-ant-'),
       hasOpenaiKey: isRealOpenAIKey(s?.openai_key),
       hasEiaKey: !!(s?.eia_api_key),
@@ -1285,7 +1306,10 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     ensureUserSettings(userId);
     const updates = [];
-    if (body.provider) updates.push(`ai_provider = '${body.provider === 'anthropic' ? 'anthropic' : 'openai'}'`);
+    if (body.provider !== undefined) {
+      if (!PROVIDERS.has(body.provider)) return json(res, 400, { error: 'Unsupported AI provider. Nothing was saved.' });
+      updates.push(`ai_provider = '${body.provider}'`);
+    }
     if (body.model) updates.push(`ai_model = '${body.model.replace(/'/g, "''")}'`);
     if (body.anthropicKey) updates.push(`anthropic_key = '${body.anthropicKey.trim().replace(/'/g, "''")}'`);
     if (body.openaiKey) updates.push(`openai_key = '${body.openaiKey.trim().replace(/'/g, "''")}'`);
@@ -1582,6 +1606,16 @@ const server = http.createServer(async (req, res) => {
       ? (isClaudeModel ? rawModel : 'claude-sonnet-4-6')
       : (isOpenAIModel ? rawModel : 'gpt-4o');
     const body = await readBody(req);
+    if (provider === LOCAL_PROVIDER) {
+      try {
+        let parsed;
+        try { parsed = JSON.parse(body); } catch (_) { return json(res, 400, { error: 'Invalid JSON body' }); }
+        return json(res, 200, await lmStudio.complete(parsed || {}));
+      } catch (e) {
+        log('proxy: LM Studio request failed:', e.message);
+        return json(res, e.statusCode || 500, { error: e.statusCode ? e.message : 'LM Studio request failed' });
+      }
+    }
     try {
       if (provider === 'anthropic') {
         const apiKey = s?.anthropic_key;
@@ -1668,10 +1702,16 @@ const server = http.createServer(async (req, res) => {
       + 'If unsure about a word, leave it unchanged.';
     const userMsg = (context ? 'Context/glossary:\n' + context.slice(0, 4000) + '\n\n' : '')
       + 'Transcript to correct:\n' + text;
-    const corrected = await llmComplete(userId, {
-      system, messages: [{ role: 'user', content: userMsg }],
-      max_tokens: Math.min(1024, Math.ceil(text.length / 2) + 64)
-    });
+    let corrected;
+    try {
+      corrected = await llmComplete(userId, {
+        system, messages: [{ role: 'user', content: userMsg }],
+        max_tokens: Math.min(1024, Math.ceil(text.length / 2) + 64)
+      });
+    } catch (e) {
+      log('refine: LM Studio request failed:', e.message);
+      return json(res, e.statusCode || 500, { error: e.statusCode ? e.message : 'LM Studio request failed' });
+    }
     const out = (corrected && corrected.trim()) ? corrected.trim() : text;
     if (out !== text) log('Refine: ' + JSON.stringify(text) + ' → ' + JSON.stringify(out));
     return json(res, 200, { text: out });
@@ -1750,6 +1790,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Microsoft To Do ──────────────────────────────────────────
+  if (MSFT_CLOUD_ROUTES.has(url) && isLocalOnly(userId)) {
+    return json(res, 403, { error: 'Microsoft To Do is blocked while the LM Studio backend is selected.' });
+  }
+
   if (req.method === 'GET' && url === '/msft/status') {
     ensureUserSettings(userId);
     const s = dbGet(`SELECT msft_client_id, msft_tokens FROM user_settings WHERE user_id = ${userId}`);

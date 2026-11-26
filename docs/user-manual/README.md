@@ -12,7 +12,7 @@ Supported runtime: 2.1.0. The current screens and installer still say **Meetinte
 ## Configure AI and audio
 
 1. Select **Settings** (gear) on the toolbar.
-2. Choose **AI Provider** (OpenAI or Anthropic) and a **Model**. Enter the corresponding API key in its field and select **Save**. The status text shows whether a key is saved; the field itself is cleared when Settings opens again.
+2. Choose **AI Provider**. For OpenAI or Anthropic, choose a **Model**, enter the corresponding API key in its field, and select **Save**. The status text shows whether a key is saved; the field itself is cleared when Settings opens again. For **LM Studio (local)**, select **Save**; the model comes from your administrator's configuration. With LM Studio, AI requests go only to the configured server and an error card appears if it fails (there is no cloud fallback). The app also blocks **Web Speech**, web research, and sending to Microsoft To Do.
 3. If desired, set the **Wake word** and **Injection mode** in the same dialog. The latter is marked as applying to the Anthropic provider.
 4. For transcription, choose **Web Speech** (Chrome only) or **Whisper** above the live transcript. Web Speech is unavailable in Electron. Choose a microphone from **Microphone source**.
 5. Adjust **Interval**, **Terseness**, **Others only / Everyone / Fact-check me**, **Echo**, **Denoise**, **AGC**, **Boost**, and **Chunk** as needed. Restart listening after changing Echo, Denoise, or AGC to apply the new microphone constraints. Hold **Space** while speaking to mark your own voice in the push-to-talk flow.
@@ -20,7 +20,7 @@ Supported runtime: 2.1.0. The current screens and installer still say **Meetinte
 
 The Settings dialog also has an **EIA.gov API Key** field for the market strip. An administrator can configure a key through the approved secret workflow; the interface says its fallback demo key is rate limited.
 
-The current Settings screen has no LM Studio, Claude Code, or Codex backend selector. API-backed AI functions may send supplied content to the selected provider. The interface does not enforce a meeting consent step before capture; obtain participant consent yourself before using any listening or recording control.
+The current Settings screen has no Claude Code or Codex backend. With OpenAI or Anthropic, AI functions may send supplied content to that provider. The interface does not enforce a meeting consent step before capture; obtain participant consent yourself before using any listening or recording control.
 
 ## Run a meeting and transcribe it
 

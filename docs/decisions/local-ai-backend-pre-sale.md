@@ -25,9 +25,20 @@ were not inspected.
 - Claude Code and Codex do not satisfy the local claim here: it rests on a local backend. This record does not decide
   when those two must ship; the charter still requires them.
 
-## What the build does today
+## Gate status (task #22959)
 
-Settings offers only OpenAI and Anthropic. Observed by running `server.js` with a fake key and outbound requests
+The LM Studio backend and its blocks are written, but **the gate has not passed**: no item has been observed on the
+build to be sold. The tests added in `tests/` have not been run (no verification capacity was available). There has
+been no run against a real LM Studio (no model was loaded when checked), no Docker image build or container
+connection, and no network capture.
+
+For item 4 on the Docker build, one way to capture the whole session is to run the browser in a container that shares
+the app container's network (`--network container:meetintel`), with `tcpdump` attached to the same network. A single
+capture then covers both screen and server.
+
+## What the build did before task #22959
+
+Settings offered only OpenAI and Anthropic. Observed by running `server.js` with a fake key and outbound requests
 blocked:
 
 | Action | Observed |

@@ -1595,8 +1595,10 @@ async function aiExtractTodos() {
           if (!added) alert('No new action items found — all already captured or none detected.');
         }
       }
+    } else if (data.error) {
+      showApiError(data.error);
     }
-  } catch(e) { console.error('AI extract error:', e); }
+  } catch(e) { console.error('AI extract error:', e); showApiError(e.message); }
   btn.innerHTML = '<i class="ti ti-sparkles" aria-hidden="true"></i> Extract from transcript';
   btn.disabled = false;
 }
@@ -1681,12 +1683,13 @@ async function init() {
 
   // Transcription runs locally (offline Whisper) — no key needed.
   setSttMode('whisper');
+  applyLocalBackendBlocks();
 
   // A/V recording is a desktop-only feature (recordings stored on local disk).
   if (IS_DESKTOP) { const rb = document.getElementById('recordBtn'); if (rb) rb.style.display = ''; }
 
   // show setup guidance if no AI key for insight cards
-  if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
+  if (!_userSettings.localOnly && !_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
     showSetupCard();
     setTimeout(openSettings, 600);
   }
@@ -1834,6 +1837,7 @@ function dbg(msg) {
 async function startWebSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert('Web Speech API not available in this browser. Switch to Whisper.'); return; }
+  if (!(await webSpeechAllowed())) { setSttMode('whisper'); alert(WEB_SPEECH_BLOCKED); return; }
 
   // Viz (best-effort — Web Speech manages its own mic internally)
   initAudioGraph();
@@ -2067,9 +2071,10 @@ function renderNewsScroller(items) {
   if (_newsRaf) { cancelAnimationFrame(_newsRaf); _newsRaf = null; }
   if (!items.length) { track.innerHTML = '<span class="intel-loading">No energy headlines available</span>'; return; }
 
-  const itemHtml = items.map(it => it.link
-    ? `<span class="intel-news-item"><a href="${it.link}" target="_blank" rel="noopener">${it.title}</a></span>`
-    : `<span class="intel-news-item">${it.title}</span>`
+  // Feed text is untrusted and shares this page with the transcript, so it must not become markup.
+  const itemHtml = items.map(it => /^https?:\/\//i.test(it.link || '')
+    ? `<span class="intel-news-item"><a href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.title)}</a></span>`
+    : `<span class="intel-news-item">${esc(it.title)}</span>`
   ).join('<span class="intel-news-dot">&#x25CF;</span>');
   // Duplicate for a seamless loop (classic marquee trick — pattern from a sibling app's ticker).
   track.innerHTML = itemHtml + '<span class="intel-news-dot">&#x25CF;</span>' + itemHtml;
@@ -2512,7 +2517,7 @@ function checkForAddressTrigger() {
 let researchedEntities = new Set();
 
 async function extractEntities(recentText) {
-  if (!currentMeetingId || _userSettings.provider !== 'anthropic') return;
+  if (!currentMeetingId || !['anthropic', 'lmstudio'].includes(_userSettings.provider)) return;
   try {
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2523,6 +2528,7 @@ async function extractEntities(recentText) {
       })
     });
     const data = await resp.json();
+    if (data.error && _userSettings.localOnly) showApiError(data.error);
     const raw = data?.content?.[0]?.text?.trim() || '[]';
     const match = raw.match(/\[[\s\S]*\]/);
     const entities = match ? JSON.parse(match[0]) : [];
@@ -2543,6 +2549,7 @@ async function researchEntity(entity) {
       if (INJECTION_MODE === 'suggest-approve') showSuggestion(entity, cd.summary);
       return;
     }
+    if (_userSettings.localOnly) { dbg('Web research blocked with the LM Studio backend: ' + entity); return; }
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2649,9 +2656,13 @@ Answer in 1-3 short sentences, conversationally — this will be read aloud, so 
     });
     const data = await resp.json();
     answer = data?.content?.[0]?.text?.trim();
-    if (!answer) dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
+    if (!answer) {
+      dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
+      showApiError(data.error || 'The AI returned no answer.');
+    }
   } catch(e) {
     dbg('Addressed question fetch failed: ' + e.message);
+    showApiError(e.message);
   }
   if (!answer) { setPresenceState(listening ? 'listening' : 'idle'); return; }
 
@@ -2736,6 +2747,11 @@ async function refineTurns(includeLast) {
           const { text } = await resp.json();
           // apply only if this turn hasn't changed/reset during the await
           if (turnChunks[i] === original && text && text.trim()) turnChunks[i] = text.trim();
+        } else if (_userSettings.localOnly) {
+          const d = await resp.json().catch(() => ({}));
+          showApiError(d.error || ('Transcript cleanup failed (HTTP ' + resp.status + ')'));
+          turnRefined[i] = true;
+          break;   // one visible error per pass, not one per turn
         }
       } catch(e) { /* leave turn as-is on failure */ }
       turnRefined[i] = true;
@@ -2901,7 +2917,7 @@ If nothing noteworthy, return [].`;
       totalInputTokens += (data.usage.input_tokens || 0);
       totalOutputTokens += (data.usage.output_tokens || 0);
       const cost = (totalInputTokens * 3 / 1e6) + (totalOutputTokens * 15 / 1e6);
-      document.getElementById('costDisplay').textContent = '$' + cost.toFixed(3) + ' est.';
+      document.getElementById('costDisplay').textContent = _userSettings.localOnly ? 'local model' : '$' + cost.toFixed(3) + ' est.';
     }
     if (data.content && data.content[0] && data.content[0].text) {
       let raw = data.content[0].text.trim();
@@ -3123,6 +3139,9 @@ function deleteCard(btn) {
 
 function friendlyApiError(raw) {
   const s = (typeof raw === 'string' ? raw : JSON.stringify(raw)).toLowerCase();
+  if (s.includes('lm studio')) {
+    return { title: 'LM Studio error', body: String(raw).substring(0, 300), action: 'settings' };
+  }
   if (s.includes('no anthropic api key') || s.includes('no openai api key') || s.includes('add your')) {
     return { title: 'API key not configured', body: 'Open Settings and add your Anthropic or OpenAI key to enable insight cards.', action: 'settings' };
   }
@@ -3199,12 +3218,13 @@ function clearAll() {
   clearCardSearch();
 }
 
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtBody(s) {
   if (!s) return '';
-  // handle fenced code blocks first
-  let out = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    return '<pre style="background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius);padding:8px 10px;overflow-x:auto;margin:6px 0;font-family:Consolas,monospace;font-size:11px;line-height:1.5;">' + escRaw(code.trim()) + '</pre>';
+  // Escape everything first: model output is untrusted, and an injected tag could send meeting text off the network.
+  // Then handle fenced code blocks.
+  let out = esc(s).replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return '<pre style="background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius);padding:8px 10px;overflow-x:auto;margin:6px 0;font-family:Consolas,monospace;font-size:11px;line-height:1.5;">' + code.trim() + '</pre>';
   });
   // inline code
   out = out.replace(/`([^`]+)`/g, '<code style="font-family:Consolas,monospace;font-size:11px;background:var(--surface2);padding:1px 4px;border-radius:3px;">$1</code>');
@@ -3212,7 +3232,6 @@ function fmtBody(s) {
   out = out.replace(/\n/g, '<br>');
   return out;
 }
-function escRaw(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── document RAG ─────────────────────────────────────────────
 let _docsOpen = true;
@@ -3293,6 +3312,10 @@ async function toggleMsftPanel() {
   const panel = document.getElementById('msftPanel');
   if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
   panel.style.display = '';
+  if (_userSettings.localOnly) {
+    panel.innerHTML = '<div class="msft-panel">Microsoft To Do is blocked with the LM Studio backend, because it sends task text to Microsoft.<br><button class="msft-btn secondary" onclick="exportTodosIcs()"><i class="ti ti-calendar-down" aria-hidden="true"></i> Export .ics for Outlook</button></div>';
+    return;
+  }
   await renderMsftPanel();
 }
 
@@ -3491,6 +3514,27 @@ async function doLogout() {
   window.location.reload();
 }
 
+// ── Local backend blocks ─────────────────────────────────────
+const WEB_SPEECH_BLOCKED = 'Web Speech sends audio to a cloud service, so it is blocked with the LM Studio backend. Use Whisper.';
+
+// Asks the server rather than trusting this tab's copy, and blocks when it cannot tell.
+async function webSpeechAllowed() {
+  try {
+    const s = await (await fetch('/user/settings')).json();
+    return s.localOnly === false;
+  } catch(e) { return false; }
+}
+
+function applyLocalBackendBlocks() {
+  const local = _userSettings.localOnly === true;
+  document.getElementById('btnWebSpeech').disabled = local;
+  if (!local) return;
+  if (recognition) stopListen();
+  setSttMode('whisper');
+  stopMsftPoll();
+  document.getElementById('msftPanel').style.display = 'none';
+}
+
 // ── Settings ─────────────────────────────────────────────────
 let _userSettings = { provider: 'openai', model: 'gpt-4o', hasAnthropicKey: false, hasOpenaiKey: false, hasEiaKey: false, tier: 'trial', trialSecondsLeft: null };
 
@@ -3548,7 +3592,7 @@ function renderSettings() {
   const modelSel = document.getElementById('settingsModel');
   providerSel.value = s.provider || 'openai';
   updateModelOptions();
-  modelSel.value = s.model || 'gpt-4o';
+  if (s.provider !== 'lmstudio') modelSel.value = s.model || 'gpt-4o';
   document.getElementById('settingsAnthropicStatus').textContent = s.hasAnthropicKey ? '✓ Key saved' : '';
   document.getElementById('settingsOpenaiStatus').textContent = s.hasOpenaiKey ? '✓ Key saved' : '';
   document.getElementById('settingsEiaStatus').textContent = s.hasEiaKey ? '✓ Key saved' : '';
@@ -3562,9 +3606,16 @@ function renderSettings() {
 function updateModelOptions() {
   const provider = document.getElementById('settingsProvider').value;
   const modelSel = document.getElementById('settingsModel');
+  const local = provider === 'lmstudio';
+  modelSel.disabled = local;   // the LM Studio model comes from server configuration
+  if (local) {
+    const name = _userSettings.lmStudioModel;
+    modelSel.innerHTML = `<option value="">${name ? esc(name) : 'Not configured: set LMSTUDIO_MODEL'}</option>`;
+    return;
+  }
   const models = provider === 'anthropic' ? CLAUDE_MODELS : OPENAI_MODELS;
   modelSel.innerHTML = models.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
-  if (_userSettings.model) modelSel.value = _userSettings.model;
+  if (models.some(m => m.id === _userSettings.model)) modelSel.value = _userSettings.model;
 }
 
 async function saveSettings() {
@@ -3585,8 +3636,16 @@ async function saveSettings() {
   const im = document.getElementById('settingsInjectionMode').value;
   INJECTION_MODE = im; localStorage.setItem('injectionMode', im);
   renderWakeBadge();
-  await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!body.model) delete body.model;
+  const saved = await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!saved.ok) {
+    const d = await saved.json().catch(() => ({}));
+    btn.disabled = false; btn.textContent = 'Save';
+    alert(d.error || 'Settings were not saved.');
+    return;
+  }
   await loadUserSettings();
+  applyLocalBackendBlocks();
   btn.disabled = false; btn.textContent = 'Save';
   closeSettings();
 }
@@ -3647,6 +3706,7 @@ init();
       <select id="settingsProvider" onchange="updateModelOptions()">
         <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic (Claude)</option>
+        <option value="lmstudio">LM Studio (local)</option>
       </select>
     </div>
     <div class="settings-row">
