@@ -1,0 +1,11 @@
+diff a/server.js b/server.js	(rejected hunks)
+@@ -4,6 +4,9 @@ const path = require('path');
+ const crypto = require('crypto');
+ const https = require('https');
+ const { Worker } = require('worker_threads');
++const { redactLogFile } = require('./log-redaction');
++const { createMeetingDeleter } = require('./meeting-delete');
++const { createLocalControlGuard } = require('./local-control');
+ 
+ // ── Version / build ──────────────────────────────────────────
+ // Bump BUILD on every deploy so you can confirm in the UI that fresh code
