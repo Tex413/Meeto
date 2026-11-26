@@ -67,7 +67,8 @@ function freePort() {
 
 async function startServer(t, extraEnv = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'meeteor-license-'));
-  const preload = path.join(dir, 'preload.js');
+  // .cjs: a "type": "module" package.json above the temp directory must not change how this loads.
+  const preload = path.join(dir, 'preload.cjs');
   fs.writeFileSync(preload, PRELOAD);
   fs.writeFileSync(path.join(dir, '.env'), 'STRIPE_SECRET_KEY=fake\n');
   const port = await freePort();

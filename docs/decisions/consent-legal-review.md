@@ -128,7 +128,9 @@ Engineering defaults for the implementation, pending counsel.
 
 ## Related gaps
 
-Found while reading; separate from the gate.
+Found while reading; separate from the gate. Task #23021 later changed the code for the transcript logging, meeting
+deletion and remote start gaps below (remote start still gives no consent; see `README.md` for the proxy requirement).
+The rest of this review, including the capture table, describes the code as it was read.
 
 - Meeting text reaches `meetintel.log`, and deleting a meeting does not remove it.
 - `DELETE /meeting/` does not delete the meeting's `intel_cache` rows, ignores a failed recording-file deletion and
