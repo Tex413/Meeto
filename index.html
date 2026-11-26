@@ -701,6 +701,24 @@ html, body {
 }
 .settings-key-status { font-size: 11px; color: var(--green); margin-top: 3px; font-weight: 500; }
 
+/* ── Meeting consent ── */
+.consent-overlay { z-index: 1200; }
+.consent-overlay .overlay-card { max-width: 560px; max-height: 100%; overflow-y: auto; }
+.consent-draft { font-size: 11px; font-weight: 700; color: var(--warn-text); margin-bottom: 8px; }
+.consent-text { font-size: 15px; line-height: 1.6; margin-bottom: 12px; }
+.consent-status { font-size: 12px; color: var(--text2); margin: 10px 0; }
+.consent-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-bottom: 10px; cursor: pointer; }
+.capture-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 2000;
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 99px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5); font-size: 12px; font-weight: 600;
+  max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center;
+}
+.capture-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text3); }
+.capture-bar.on { border-color: #ef4444; }
+.capture-bar.on .capture-dot { background: #ef4444; animation: pulse 1.5s infinite; }
+
 .paywall-icon { font-size: 44px; text-align: center; margin-bottom: 16px; }
 .paywall-features { list-style: none; margin-bottom: 22px; }
 .paywall-features li { font-size: 13px; padding: 5px 0; color: var(--text2); display: flex; align-items: center; gap: 8px; }
@@ -852,7 +870,7 @@ html, body {
     <button class="btn small" onclick="clearAll()" title="Clear all"><i class="ti ti-trash" aria-hidden="true"></i></button>
     <button class="btn small" onclick="testAI()" title="Test AI connection" id="testAIBtn"><i class="ti ti-plug" aria-hidden="true"></i> Test AI</button>
     <button class="btn small" onclick="toggleDbg()" title="Debug log"><i class="ti ti-bug" aria-hidden="true"></i></button>
-    <button class="btn small" onclick="toggleRoomCamera()" id="cameraToggleBtn" title="Enable room camera — presence/hand-raise detection only, ephemeral, nothing ever recorded or sent anywhere"><i class="ti ti-camera" aria-hidden="true"></i></button>
+    <button class="btn small" onclick="toggleRoomCamera()" id="cameraToggleBtn" style="display:none" title="Enable room camera — presence/hand-raise detection only, ephemeral, nothing ever recorded or sent anywhere"><i class="ti ti-camera" aria-hidden="true"></i></button>
     <button class="btn small" onclick="openSettings()" title="Settings"><i class="ti ti-settings" aria-hidden="true"></i></button>
     <button class="btn small" onclick="doLogout()" title="Sign out"><i class="ti ti-lock" aria-hidden="true"></i></button>
     <div class="topbar-sep"></div>
@@ -1042,6 +1060,7 @@ html, body {
       <div class="hist-tab-content" id="histCards"></div>
       <div class="hist-tab-content" id="histTranscript" style="display:none;white-space:pre-wrap;font-size:12px;color:var(--text2);"></div>
       <div class="hist-tab-content" id="histRecording" style="display:none;">
+        <select id="histPart" class="mic-select" style="display:none;margin-bottom:8px;" onchange="showRecordingPart(this.value)" aria-label="Recording part"></select>
         <video id="histVideo" controls preload="metadata" style="width:100%;border-radius:8px;background:#000;"></video>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
           <button class="btn small" id="genTranscriptBtn" onclick="generateTranscriptFromRecording()"><i class="ti ti-file-text" aria-hidden="true"></i> Generate transcript</button>
@@ -1057,9 +1076,41 @@ html, body {
   </div>
 </div>
 
+<!-- Capture indicator: on screen the whole time anything is captured, above every overlay -->
+<div class="capture-bar" id="captureBar" role="status" style="display:none">
+  <span class="capture-dot"></span>
+  <span id="captureText"></span>
+  <button class="btn small" id="lateArrivalBtn" onclick="lateArrival()" title="Stops capture and announces again; capture restarts only if everyone agrees">Someone joined</button>
+  <button class="btn small danger" id="withdrawBtn" onclick="withdrawConsent()">Withdraw consent · stop all capture</button>
+</div>
+
+<!-- Meeting consent prompt (lib/consent-prompt.js) -->
+<div class="overlay consent-overlay" id="consentOverlay" style="display:none">
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+    <button class="overlay-close" id="consentCloseBtn" title="Close (capture stays off)">×</button>
+    <h3 id="consentTitle">Consent before capture</h3>
+    <p class="consent-draft" id="consentDraft"></p>
+    <p class="consent-text" id="consentText"></p>
+    <p class="sub" id="consentClipNote" style="display:none">For A/V recording, the microphone records only this announcement and the answers, so they are part of the recording. The clip is discarded if anyone declines. Counsel has not approved this step.</p>
+    <button class="btn small" id="consentPlayBtn">Speak again</button>
+    <p class="consent-status" id="consentStatus" aria-live="polite"></p>
+    <label class="consent-check" id="consentReadRow"><input type="checkbox" id="consentReadAloud"> I read the whole announcement aloud to everyone present</label>
+    <label class="consent-check"><input type="checkbox" id="consentEveryone"> Everyone present heard it and agreed</label>
+    <div class="settings-row">
+      <label for="consentConfirmer">Your name (who is confirming)</label>
+      <input type="text" id="consentConfirmer" maxlength="120" autocomplete="off">
+    </div>
+    <button class="btn-upgrade" id="consentAgreeBtn" disabled>Record consent and start capture</button>
+    <button class="btn small" id="consentDeclineBtn" style="width:100%;justify-content:center;">Decline · capture stays off</button>
+  </div>
+</div>
+
+<script src="/consent-client.js"></script>
+<script src="/consent-prompt.js"></script>
 <script>
 const APP_BUILD = '__BUILD__';
 const IS_DESKTOP = ('__DESKTOP__' === '1');   // injected by server; A/V recording is desktop-only
+const ROOM_CAMERA_ENABLED = ('__ROOM_CAMERA__' === '1');   // off in sold builds pending counsel
 let listening = false;
 let transcript_final = '';
 let audioCtx = null, micStream = null, workletNode = null;
