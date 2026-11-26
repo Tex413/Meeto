@@ -12,6 +12,7 @@ const SOURCES = [
   'preload.js',
   'inference-worker.js',
   'mcp-server.js',
+  'lib/ai-backend.js',
   'scripts/probe-outbound.js',
   'scripts/smoke-inference.js',
   'tools/sign-license.js',
