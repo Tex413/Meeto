@@ -8,6 +8,7 @@ RUN npm ci --omit=dev
 
 # Copy app source
 COPY *.js *.html *.vbs .gitignore ./
+COPY lib ./lib
 
 # Persistent data lives in a mounted volume
 ENV DATA_DIR=/app/data
