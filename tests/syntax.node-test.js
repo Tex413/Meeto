@@ -8,6 +8,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const SOURCES = [
   'server.js',
+  'license.js',
   'main.js',
   'preload.js',
   'inference-worker.js',
