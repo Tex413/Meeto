@@ -1681,12 +1681,13 @@ async function init() {
 
   // Transcription runs locally (offline Whisper) — no key needed.
   setSttMode('whisper');
+  applyLocalBackendBlocks();
 
   // A/V recording is a desktop-only feature (recordings stored on local disk).
   if (IS_DESKTOP) { const rb = document.getElementById('recordBtn'); if (rb) rb.style.display = ''; }
 
   // show setup guidance if no AI key for insight cards
-  if (!_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
+  if (!_userSettings.localOnly && !_userSettings.hasOpenaiKey && !_userSettings.hasAnthropicKey) {
     showSetupCard();
     setTimeout(openSettings, 600);
   }
@@ -1834,6 +1835,7 @@ function dbg(msg) {
 async function startWebSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert('Web Speech API not available in this browser. Switch to Whisper.'); return; }
+  if (!(await webSpeechAllowed())) { setSttMode('whisper'); alert(WEB_SPEECH_BLOCKED); return; }
 
   // Viz (best-effort — Web Speech manages its own mic internally)
   initAudioGraph();
@@ -2512,7 +2514,7 @@ function checkForAddressTrigger() {
 let researchedEntities = new Set();
 
 async function extractEntities(recentText) {
-  if (!currentMeetingId || _userSettings.provider !== 'anthropic') return;
+  if (!currentMeetingId || !['anthropic', 'lmstudio'].includes(_userSettings.provider)) return;
   try {
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2523,6 +2525,7 @@ async function extractEntities(recentText) {
       })
     });
     const data = await resp.json();
+    if (data.error && _userSettings.localOnly) showApiError(data.error);
     const raw = data?.content?.[0]?.text?.trim() || '[]';
     const match = raw.match(/\[[\s\S]*\]/);
     const entities = match ? JSON.parse(match[0]) : [];
@@ -2543,6 +2546,7 @@ async function researchEntity(entity) {
       if (INJECTION_MODE === 'suggest-approve') showSuggestion(entity, cd.summary);
       return;
     }
+    if (_userSettings.localOnly) { dbg('Web research blocked with the LM Studio backend: ' + entity); return; }
     const resp = await fetch('/proxy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2649,9 +2653,13 @@ Answer in 1-3 short sentences, conversationally — this will be read aloud, so 
     });
     const data = await resp.json();
     answer = data?.content?.[0]?.text?.trim();
-    if (!answer) dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
+    if (!answer) {
+      dbg('Addressed question: no answer returned — ' + JSON.stringify(data.error || data));
+      showApiError(data.error || 'The AI returned no answer.');
+    }
   } catch(e) {
     dbg('Addressed question fetch failed: ' + e.message);
+    showApiError(e.message);
   }
   if (!answer) { setPresenceState(listening ? 'listening' : 'idle'); return; }
 
@@ -2736,6 +2744,11 @@ async function refineTurns(includeLast) {
           const { text } = await resp.json();
           // apply only if this turn hasn't changed/reset during the await
           if (turnChunks[i] === original && text && text.trim()) turnChunks[i] = text.trim();
+        } else if (_userSettings.localOnly) {
+          const d = await resp.json().catch(() => ({}));
+          showApiError(d.error || ('Transcript cleanup failed (HTTP ' + resp.status + ')'));
+          turnRefined[i] = true;
+          break;   // one visible error per pass, not one per turn
         }
       } catch(e) { /* leave turn as-is on failure */ }
       turnRefined[i] = true;
@@ -2901,7 +2914,7 @@ If nothing noteworthy, return [].`;
       totalInputTokens += (data.usage.input_tokens || 0);
       totalOutputTokens += (data.usage.output_tokens || 0);
       const cost = (totalInputTokens * 3 / 1e6) + (totalOutputTokens * 15 / 1e6);
-      document.getElementById('costDisplay').textContent = '$' + cost.toFixed(3) + ' est.';
+      document.getElementById('costDisplay').textContent = _userSettings.localOnly ? 'local model' : '$' + cost.toFixed(3) + ' est.';
     }
     if (data.content && data.content[0] && data.content[0].text) {
       let raw = data.content[0].text.trim();
@@ -3123,6 +3136,9 @@ function deleteCard(btn) {
 
 function friendlyApiError(raw) {
   const s = (typeof raw === 'string' ? raw : JSON.stringify(raw)).toLowerCase();
+  if (s.includes('lm studio')) {
+    return { title: 'LM Studio error', body: String(raw).substring(0, 300), action: 'settings' };
+  }
   if (s.includes('no anthropic api key') || s.includes('no openai api key') || s.includes('add your')) {
     return { title: 'API key not configured', body: 'Open Settings and add your Anthropic or OpenAI key to enable insight cards.', action: 'settings' };
   }
@@ -3491,6 +3507,27 @@ async function doLogout() {
   window.location.reload();
 }
 
+// ── Local backend blocks ─────────────────────────────────────
+const WEB_SPEECH_BLOCKED = 'Web Speech sends audio to a cloud service, so it is blocked with the LM Studio backend. Use Whisper.';
+
+// Asks the server rather than trusting this tab's copy, and blocks when it cannot tell.
+async function webSpeechAllowed() {
+  try {
+    const s = await (await fetch('/user/settings')).json();
+    return s.localOnly === false;
+  } catch(e) { return false; }
+}
+
+function applyLocalBackendBlocks() {
+  const local = _userSettings.localOnly === true;
+  document.getElementById('btnWebSpeech').disabled = local;
+  if (!local) return;
+  if (recognition) stopListen();
+  setSttMode('whisper');
+  stopMsftPoll();
+  document.getElementById('msftPanel').style.display = 'none';
+}
+
 // ── Settings ─────────────────────────────────────────────────
 let _userSettings = { provider: 'openai', model: 'gpt-4o', hasAnthropicKey: false, hasOpenaiKey: false, hasEiaKey: false, tier: 'trial', trialSecondsLeft: null };
 
@@ -3548,7 +3585,7 @@ function renderSettings() {
   const modelSel = document.getElementById('settingsModel');
   providerSel.value = s.provider || 'openai';
   updateModelOptions();
-  modelSel.value = s.model || 'gpt-4o';
+  if (s.provider !== 'lmstudio') modelSel.value = s.model || 'gpt-4o';
   document.getElementById('settingsAnthropicStatus').textContent = s.hasAnthropicKey ? '✓ Key saved' : '';
   document.getElementById('settingsOpenaiStatus').textContent = s.hasOpenaiKey ? '✓ Key saved' : '';
   document.getElementById('settingsEiaStatus').textContent = s.hasEiaKey ? '✓ Key saved' : '';
@@ -3562,9 +3599,16 @@ function renderSettings() {
 function updateModelOptions() {
   const provider = document.getElementById('settingsProvider').value;
   const modelSel = document.getElementById('settingsModel');
+  const local = provider === 'lmstudio';
+  modelSel.disabled = local;   // the LM Studio model comes from server configuration
+  if (local) {
+    const name = _userSettings.lmStudioModel;
+    modelSel.innerHTML = `<option value="">${name ? esc(name) : 'Not configured: set LMSTUDIO_MODEL'}</option>`;
+    return;
+  }
   const models = provider === 'anthropic' ? CLAUDE_MODELS : OPENAI_MODELS;
   modelSel.innerHTML = models.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
-  if (_userSettings.model) modelSel.value = _userSettings.model;
+  if (models.some(m => m.id === _userSettings.model)) modelSel.value = _userSettings.model;
 }
 
 async function saveSettings() {
@@ -3585,8 +3629,16 @@ async function saveSettings() {
   const im = document.getElementById('settingsInjectionMode').value;
   INJECTION_MODE = im; localStorage.setItem('injectionMode', im);
   renderWakeBadge();
-  await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!body.model) delete body.model;
+  const saved = await fetch('/user/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!saved.ok) {
+    const d = await saved.json().catch(() => ({}));
+    btn.disabled = false; btn.textContent = 'Save';
+    alert(d.error || 'Settings were not saved.');
+    return;
+  }
   await loadUserSettings();
+  applyLocalBackendBlocks();
   btn.disabled = false; btn.textContent = 'Save';
   closeSettings();
 }
@@ -3647,6 +3699,7 @@ init();
       <select id="settingsProvider" onchange="updateModelOptions()">
         <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic (Claude)</option>
+        <option value="lmstudio">LM Studio (local)</option>
       </select>
     </div>
     <div class="settings-row">
