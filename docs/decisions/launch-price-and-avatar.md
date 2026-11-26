@@ -57,6 +57,8 @@ Approving a price does not make the product ready to sell:
 2. `landing.html` promises "Lifetime updates included" and "All current & future features". If approved, this becomes
    1 year of updates. It also asks for a Claude API key only, while the charter requires a choice of backend.
 3. The charter's working-member loop still has to work in real meetings. This record does not assess it.
+4. The LM Studio backend is not built, so a customer cannot yet supply a local model. It is required before the first
+   sale: see [local-ai-backend-pre-sale.md](local-ai-backend-pre-sale.md) (task #22753).
 
 ## How to check
 
