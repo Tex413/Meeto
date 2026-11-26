@@ -1500,10 +1500,15 @@ async function deleteMeeting() {
   if (!currentHistMeetingId) return;
   if (!confirm('Delete this meeting and all its cards? This cannot be undone.')) return;
   try {
-    await fetch('/meeting/' + currentHistMeetingId, { method: 'DELETE' });
+    const r = await fetch('/meeting/' + currentHistMeetingId, { method: 'DELETE' });
+    if (!r.ok) {
+      const failure = await r.json().catch(() => ({}));
+      alert(failure.message || 'The meeting could not be deleted.');
+      return;
+    }
     backToList();
     await loadHistoryList();
-  } catch(e) {}
+  } catch(e) { alert('The meeting could not be deleted: the server did not respond.'); }
 }
 
 // ── todo list ─────────────────────────────────────────────────
