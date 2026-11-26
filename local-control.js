@@ -1,0 +1,64 @@
+'use strict';
+
+const crypto = require('node:crypto');
+
+// A loopback socket alone proves nothing behind a same-host proxy: every outside request arrives from 127.0.0.1.
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+const PROXY_HEADERS = [
+  'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded', 'via', 'cf-connecting-ip',
+];
+const LOOPBACK_HOST_HEADER = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+
+function isLoopbackUrl(value) {
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(value).hostname);
+  } catch (_) {
+    return false; // an address we cannot read is treated as public
+  }
+}
+
+// True only for a request that shows no sign of having come from anywhere but this machine.
+function isDirectLocalRequest(req) {
+  const { headers } = req;
+  if (!LOOPBACK_ADDRESSES.has(req.socket.remoteAddress || '')) return false;
+  if (PROXY_HEADERS.some(name => headers[name] !== undefined)) return false;
+  // Also stops DNS rebinding, where a web page's own host name resolves to 127.0.0.1.
+  if (!LOOPBACK_HOST_HEADER.test(headers.host || '')) return false;
+  // Stream Deck and MCP send no Origin; a browser sends one on a cross-origin request.
+  if (headers.origin !== undefined && !isLoopbackUrl(headers.origin)) return false;
+  return headers['sec-fetch-site'] !== 'cross-site';
+}
+
+function bearerMatches(header, token) {
+  const match = /^Bearer (.+)$/.exec(header || '');
+  if (!match) return false;
+  // Hashing gives timingSafeEqual the equal lengths it requires.
+  const digest = value => crypto.createHash('sha256').update(value).digest();
+  return crypto.timingSafeEqual(digest(match[1]), digest(token));
+}
+
+function createLocalControlGuard({ publicUrl, token = '' }) {
+  const isPublicDeployment = !isLoopbackUrl(publicUrl);
+
+  // Returns null when a start/stop command may run, otherwise the refusal to send.
+  function refuseCommand(req) {
+    if (!isDirectLocalRequest(req)) return { status: 403, error: 'forbidden' };
+    if (token) return bearerMatches(req.headers.authorization, token) ? null : { status: 401, error: 'unauthorized' };
+    return isPublicDeployment ? { status: 403, error: 'local_control_token_required' } : null;
+  }
+
+  function startupNotice() {
+    if (token) return null;
+    if (isPublicDeployment) {
+      return 'Local recording start/stop is disabled: PUBLIC_URL is not a loopback address and '
+        + 'LOCAL_CONTROL_TOKEN is not set.';
+    }
+    return 'WARNING: local recording start/stop is running without LOCAL_CONTROL_TOKEN. If a proxy forwards to '
+      + 'this server, set LOCAL_CONTROL_TOKEN or a non-loopback PUBLIC_URL.';
+  }
+
+  return { isDirectLocalRequest, refuseCommand, startupNotice };
+}
+
+module.exports = { createLocalControlGuard };

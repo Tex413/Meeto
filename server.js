@@ -4,6 +4,9 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const { Worker } = require('worker_threads');
+const { redactLogFile } = require('./log-redaction');
+const { createMeetingDeleter } = require('./meeting-delete');
+const { createLocalControlGuard } = require('./local-control');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -45,6 +48,13 @@ function log(...args) {
 }
 process.on('uncaughtException', e => log('UNCAUGHT', e.stack || e.message));
 process.on('unhandledRejection', e => log('UNHANDLED', e?.stack || e));
+// Earlier builds logged transcript text. Redact it before this run adds anything.
+try {
+  const redactedCount = redactLogFile(LOG_FILE);
+  if (redactedCount) log(`Redacted transcript text from ${redactedCount} existing log lines`);
+} catch (e) {
+  log('WARNING: could not redact transcript text from the existing log:', e.code || e.message);
+}
 
 // ── sqlite ─────────────────────────────────────────────────────
 const initSqlJs = require('sql.js');
@@ -202,14 +212,10 @@ const sessions = new Map(); // token → { userId, expiry }
 const SESSION_MS = 8 * 60 * 60 * 1000;
 
 // ── local-only recording control (Stream Deck / MCP) ─────────────
-// Deliberately unauthenticated: this only ever lets a process on the SAME machine tell an
-// already-open, already-logged-in browser tab to start/stop listening. It is not reachable from
-// Meeto's hosted multi-user service - isLoopback() is the trust boundary, not a session cookie.
+// No session cookie: this only lets a process on the SAME machine tell an already-open,
+// already-logged-in browser tab to start/stop listening. local-control.js is the trust boundary.
 const localEventClients = new Set();
-function isLoopback(req) {
-  const addr = req.socket.remoteAddress || '';
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
-}
+const localControl = createLocalControlGuard({ publicUrl: PUBLIC_URL, token: process.env.LOCAL_CONTROL_TOKEN });
 function broadcastLocalEvent(eventName) {
   const payload = `event: ${eventName}\ndata: {}\n\n`;
   for (const clientRes of localEventClients) {
@@ -325,6 +331,10 @@ async function sendResetEmail(toEmail, token) {
   log('RESET LINK (no SMTP):', url);
   return { emailed: false, url };
 }
+
+const deleteMeeting = createMeetingDeleter({
+  getDb: () => db, dbGet, saveDb, recordingsDir: RECORDINGS_DIR, log,
+});
 
 // ── request helpers ────────────────────────────────────────────
 function readBody(req) {
@@ -1125,14 +1135,14 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { received: true });
   }
 
-  // ── local-only recording control (Stream Deck / MCP) - public, but loopback-only ─────
+  // ── local-only recording control (Stream Deck / MCP) - no session, same machine only ──
   if (url === '/api/local/events' && req.method === 'GET') {
-    if (!isLoopback(req)) { res.writeHead(403); return res.end('forbidden'); }
+    // No token here: the tab's EventSource cannot send headers, and the stream carries only start/stop signals.
+    if (!localControl.isDirectLocalRequest(req)) { res.writeHead(403); return res.end('forbidden'); }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      'Connection': 'keep-alive'
     });
     res.write(': connected\n\n');
     localEventClients.add(res);
@@ -1141,7 +1151,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/api/local/start-recording' && req.method === 'POST') {
-    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    const refusal = localControl.refuseCommand(req);
+    if (refusal) return json(res, refusal.status, { error: refusal.error });
     broadcastLocalEvent('start-recording');
     // listeners tells the caller whether any open tab actually received this - the broadcast
     // is fire-and-forget, so `ok: true` alone can't distinguish "a tab is listening" from
@@ -1150,7 +1161,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/api/local/stop-recording' && req.method === 'POST') {
-    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    const refusal = localControl.refuseCommand(req);
+    if (refusal) return json(res, refusal.status, { error: refusal.error });
     broadcastLocalEvent('stop-recording');
     return json(res, 200, { ok: true, listeners: localEventClients.size });
   }
@@ -1537,15 +1549,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
-    const id = parseInt(url.split('/')[2]);
-    // Remove the recording file too (scoped to the user's own meeting).
-    const own = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    if (own && own.recording_path) {
-      try { fs.unlinkSync(path.join(RECORDINGS_DIR, own.recording_path)); } catch(e) {}
-    }
-    db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
-    db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    saveDb(); return json(res, 200, { ok: true });
+    const result = deleteMeeting(parseInt(url.split('/')[2]), userId);
+    return json(res, result.status, result.body);
   }
 
   if (req.method === 'GET' && url === '/export/csv') {
@@ -1590,7 +1595,7 @@ const server = http.createServer(async (req, res) => {
         parsedBody.model = model;
         log('proxy: Anthropic provider, model=' + model);
         const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
-        log('proxy: Anthropic response', result.status, result.body.substring(0, 80));
+        log('proxy: Anthropic response', result.status);
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       } else {
@@ -1619,8 +1624,10 @@ const server = http.createServer(async (req, res) => {
     if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
-    const body = JSON.parse(await readBody(req));
-    const { audio, sampleRate = 16000, context = '' } = body;
+    let body;
+    // Not logged: a JSON parse error quotes its input.
+    try { body = JSON.parse(await readBody(req)); } catch (_) { return json(res, 400, { error: 'invalid_json' }); }
+    const { audio, sampleRate = 16000, context = '' } = body || {};
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
       const buf = Buffer.from(audio, 'base64');
@@ -1636,8 +1643,8 @@ const server = http.createServer(async (req, res) => {
       const raw = whisperText || '';
       // local "grammar file": fuzzy-correct toward the user's domain vocabulary
       const text = correctTranscript(raw, context);
-      if (text !== raw) log('Transcribe corrected: ' + JSON.stringify(raw) + ' → ' + JSON.stringify(text));
-      log('Transcribe: ' + sampleCount + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
+      // Never log transcript text. sampleRate is client input, so only its numeric value is logged.
+      log(`Transcribe: ${sampleCount} samples @ ${Number(sampleRate)} Hz`);
       // track trial usage
       if (user.tier === 'trial') {
         const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
@@ -1659,7 +1666,9 @@ const server = http.createServer(async (req, res) => {
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     ensureUserSettings(userId);
-    const { text = '', context = '' } = JSON.parse(await readBody(req));
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch (_) { return json(res, 400, { error: 'invalid_json' }); }
+    const { text = '', context = '' } = body || {};
     const wc = text.trim().split(/\s+/).filter(Boolean).length;
     if (wc < 4) return json(res, 200, { text });               // not worth a call
     const system = 'You fix speech-to-text transcription errors. Return ONLY the corrected transcript text, nothing else. '
