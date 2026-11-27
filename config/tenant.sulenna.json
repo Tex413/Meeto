@@ -1,0 +1,21 @@
+{
+  "id": "meeteor",
+  "name": "Meeteor",
+  "website": "https://meetintel.io",
+  "supportMode": "automated_only",
+  "responseExpectation": "",
+  "inferenceMode": "demo",
+  "branding": {
+    "agentName": "Meeteor Help",
+    "avatarUrl": "",
+    "accentColor": "#3b82f6",
+    "welcomeMessage": "I am an automated assistant. Ask how to use Meeteor, fix a problem, or check its limits.",
+    "suggestedQuestions": [
+      "How do I get started with Meeteor?",
+      "Does my meeting data leave my computer?",
+      "What are the known limitations of this version?"
+    ],
+    "widgetPosition": "right",
+    "launcherText": "Meeteor help"
+  }
+}
