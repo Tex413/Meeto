@@ -12,6 +12,6 @@ In the desktop app, use **Generate transcript** in the meeting's **Recording** t
 ## Steps
 1. If you want to keep the current transcript, open the **Transcript** tab and copy it first.
 2. Check **Context**; its names and terms are used for corrections.
-3. In the **Recording** tab, select **Generate transcript**.
+3. In the **Recording** tab, select **Generate transcript**. With several parts, only the part in the player is transcribed, and its text replaces the whole saved transcript.
 4. Keep this meeting open until the progress shows **Done**. Opening another meeting stops it.
 5. Review the **Transcript** tab. If parts failed, it can be incomplete or empty.

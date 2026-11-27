@@ -7,7 +7,8 @@ Supported application runtime: **2.1.0** (`GET /version`). Meeteor's package and
 - **Network exposure.** Outside desktop mode the server listens on all network interfaces. Anyone who can reach the web app can create an account. Compose publishes port 7432 on the host. Limit access with a firewall or private network.
 - **The desktop app has no login.** Its embedded server (default port 7433) listens only on `127.0.0.1`, so other computers cannot connect to it. Any program on the same computer that connects acts as the local user. Never put a proxy or tunnel in front of it.
 - **Not a local-only product.** Meeting text can be sent to OpenAI or Anthropic. See "What leaves your computer" in the [user manual](user-manual/README.md). LM Studio, Claude Code and Codex are not selectable. Do not advertise a fully local AI backend or zero outbound meeting data for this build.
-- **No consent step is enforced.** Your organisation must handle notice and consent before any capture.
+- **Consent step.** The app announces itself and captures nothing until the host records that everyone present agreed. The server rejects transcription and recording uploads without that record. The wording is a draft that no lawyer has approved, and the record is not proof of consent. Your organisation remains responsible for notice and consent.
+- **Room camera.** It is turned off. For development only, `ROOM_CAMERA_DEV=1` enables it, but never with `NODE_ENV=production` or in a packaged desktop app. Do not enable it in a sold or demonstrated build.
 
 ## Install
 
@@ -88,7 +89,7 @@ While the setting is empty, nobody has access. Other accounts receive **Administ
 
 ### Remote start and stop (Stream Deck, MCP)
 
-The server exposes `POST /api/local/start-recording`, `POST /api/local/stop-recording` and the event stream `GET /api/local/events`. They start and stop **listening** in open app windows. All three accept only direct loopback requests; requests with proxy headers or a non-local `Host` or `Origin` are refused.
+The server exposes `POST /api/local/start-recording`, `POST /api/local/stop-recording` and the event stream `GET /api/local/events`. They start and stop **listening** in open app windows. A start never gives consent: without it, a window only opens the consent dialog. All three accept only direct loopback requests; requests with proxy headers or a non-local `Host` or `Origin` are refused.
 
 | Server | `LOCAL_CONTROL_TOKEN` | Public address (`PUBLIC_URL`/`APP_URL`) | Start and stop |
 | --- | --- | --- | --- |
@@ -126,7 +127,7 @@ Web accounts get 20 minutes of Whisper-transcribed audio and 2 document uploads.
 
 The server writes `DATA_DIR/meetintel.log` and standard output. It does not write transcript text there. Earlier builds did, so at each start the server replaces transcript text in that file with `[redacted]`. If it cannot, it logs a warning and starts anyway; fix the file's permissions and restart, or delete the file. This does not reach copies elsewhere, such as container logs, captured console output or backups. Delete any that cover builds that logged transcripts; recreating the Compose container discards its container log. The log can still contain account email addresses and, without SMTP, password-reset links.
 
-**Deleting a meeting** removes its record, cards, cached research and recording file. If the recording file cannot be deleted, the app reports an error and keeps the meeting. Backups, logs and downloaded exports are not changed.
+**Deleting a meeting** removes its record, cards, cached research, consent records and recording files. If the recording file cannot be deleted, the app reports an error and keeps the meeting. Backups, logs and downloaded exports are not changed.
 
 ## Use the admin console
 

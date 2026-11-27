@@ -259,7 +259,9 @@ test('the announcement says what is captured, kept and sent to a cloud service',
 // ── page wiring ──────────────────────────────────────────────
 // Every place index.html opens a capture device, and the gate that must come first in that function.
 test('every capture call in the page sits behind the consent gate', () => {
-  const page = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8').replace(/\r\n/g, '\n');
+  // Comments are dropped so that only real calls are counted ('//' inside a URL has no space before it).
+  const page = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8').replace(/\r\n/g, '\n')
+    .replace(/(^|\s)\/\/.*$/gm, '$1');
   const body = name => {
     const start = page.indexOf(`function ${name}(`);
     assert.ok(start >= 0, name);
