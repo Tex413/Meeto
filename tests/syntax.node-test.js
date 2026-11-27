@@ -16,6 +16,7 @@ const SOURCES = [
   'log-redaction.js',
   'meeting-delete.js',
   'local-control.js',
+  'speech-mute.js',
   'scripts/probe-outbound.js',
   'scripts/smoke-inference.js',
   'tools/sign-license.js',
