@@ -937,6 +937,12 @@ const server = http.createServer(async (req, res) => {
     } catch(e) { res.writeHead(404); return res.end('not found'); }
   }
 
+  // Spoken-answer playback and mute, loaded by index.html. Not cached, so it always matches the page.
+  if (req.method === 'GET' && url === '/speech-mute.js') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'speech-mute.js')));
+  }
+
   // Local Piper TTS (client-side WASM) — the library itself still fetches the
   // ONNX Runtime Web WASM binaries from cdnjs and voice model weights from
   // HuggingFace at runtime — same "needs internet once, then cached" shape

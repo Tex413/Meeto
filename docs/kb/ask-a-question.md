@@ -16,4 +16,4 @@ While the app is listening, say the wake word (default **Craig**) and your quest
 4. Wait for the spoken answer and its **board member** card.
 5. Pause at least 8 seconds before your next question; one run into the same stretch of speech can be ignored.
 6. Verify the answer. It does not reliably name its source.
-7. To silence an answer that is playing, use your computer's volume or mute control. **Stop** stops only the microphone.
+7. To silence an answer, select **Mute voice** in the bottom-right corner. **Stop** stops only the microphone.
