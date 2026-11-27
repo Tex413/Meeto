@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
 const SOURCES = [
@@ -17,6 +19,9 @@ const SOURCES = [
   'meeting-delete.js',
   'local-control.js',
   'speech-mute.js',
+  'consent-gate.js',
+  'consent-client.js',
+  'consent-prompt.js',
   'scripts/probe-outbound.js',
   'scripts/smoke-inference.js',
   'tools/sign-license.js',
@@ -28,6 +33,14 @@ for (const file of SOURCES) {
     assert.equal(result.status, 0, result.stderr);
   });
 }
+
+// `npm run build` cannot check the page, and one syntax error there would take the consent gate with it.
+test('the inline scripts in index.html parse', () => {
+  const page = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.ok(scripts.length >= 1);
+  for (const [, source] of scripts) new vm.Script(source, { filename: 'index.html' });
+});
 
 test('package.json declares build, test and verify commands', () => {
   const { scripts } = require(path.join(ROOT, 'package.json'));

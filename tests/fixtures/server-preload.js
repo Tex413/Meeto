@@ -8,7 +8,7 @@ const https = require('node:https');
 class FakeWorker extends EventEmitter {
   postMessage({ id, type }) {
     const result = type === 'transcribe' ? { text: process.env.FAKE_TRANSCRIPT || '' } : { embedding: [] };
-    setImmediate(() => this.emit('message', { id, result }));
+    setTimeout(() => this.emit('message', { id, result }), Number(process.env.FAKE_TRANSCRIBE_MS || 0));
   }
 }
 workerThreads.Worker = FakeWorker;
