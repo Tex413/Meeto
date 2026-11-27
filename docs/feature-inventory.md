@@ -1,6 +1,6 @@
 # Meeteor 2.1.0 documentation coverage
 
-This inventory maps the source to customer help. A route used only by a screen is listed with that screen's task. Line numbers refer to the source at commit `13a73fb`. "UM" is a section of the [user manual](user-manual/README.md); articles are in `docs/kb/`.
+This inventory maps the source to customer help. A route used only by a screen is listed with that screen's task. Line numbers refer to the source at commit `13a73fb`; rows added later name symbols instead. "UM" is a section of the [user manual](user-manual/README.md); articles are in `docs/kb/`.
 
 | Source surface | Feature or route | Manual section; articles |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ This inventory maps the source to customer help. A route used only by a screen i
 | `index.html:1122-1180, 2716-2750`; `server.js:1411-1445, 1659-1683` | Record, End, automatic save, AI transcript cleanup; `/meeting/start`, `/meeting/update`, `/meeting/end`, `/transcribe/refine` | UM: Run a meeting; `record-meeting`, `old-text-in-new-meeting` |
 | `index.html:886-895, 929, 997-1019, 2797-3127`; `server.js:1502-1526` | Interval, terseness, cards, pin, delete, filter, auto-clear, cost estimate; `/card/save`, `/card/update` | UM: Use insight cards; `use-cards`, `no-cards` |
 | `index.html:2467-2508, 2613-2714` | Wake word, spoken answer; `/documents/search`, `/api/intel-snapshot` | UM: Ask a spoken question; `ask-a-question`, `no-spoken-answer` |
+| `index.html` (`voiceMuteBtn`, `toggleVoiceMute`), `speech-mute.js`; `/speech-mute.js` | Mute and unmute the spoken voice | UM: Mute the spoken voice; `mute-voice` |
 | `index.html:2510-2611, 3626-3633`; `server.js:1362-1395` | Company research, injection mode, Speak and Dismiss; `/api/meeting-cache*` | UM: Company research and suggestions; `research-suggestions` |
 | `index.html:859-865, 2149-2205, 3635-3641` | Presence orb, presenter view | UM: Show the presence orb to the room; `presenter-view` |
 | `index.html:855, 2207-2311`; `server.js:947-954` | Room camera | UM: Use the room camera; `room-camera` |
@@ -35,7 +36,7 @@ This inventory maps the source to customer help. A route used only by a screen i
 
 ## Absent from this build
 
-The charter's consent step, LM Studio, Claude Code and Codex backends, enforced source citations, plan, document and slide generation, cross-meeting project memory, connected organisational systems, instant voice mute and configurable avatar have no matching control in the screens or server. They appear only as limitations.
+The charter's consent step, LM Studio, Claude Code and Codex backends, enforced source citations, plan, document and slide generation, cross-meeting project memory, connected organisational systems and configurable avatar have no matching control in the screens or server. They appear only as limitations.
 
 ## Not verified
 

@@ -125,6 +125,8 @@ Provider, model and keys are saved on the server for your account. Wake word and
 
 The toolbar has, from left to right: **Session title**, **Record** (or **End**), the build number, status, microphone level, microphone menu, **Start listening**, **Record A/V** (desktop only), the trial badge, **Export action items**, **History**, **Export CSV**, **Clear all**, **Test AI**, **Debug log**, **Enable room camera**, **Settings**, **Sign out**, the presence orb with the wake-word badge, and a BKV stock badge. Icon buttons show their names when you point at them.
 
+**Mute voice** stays in the bottom-right corner of the screen (see [Mute the spoken voice](#mute-the-spoken-voice)).
+
 Below are the market strip and the transcription controls. The left side holds **Live transcript**, **To-dos**, **Context** and **Documents**; the right side holds **Insight cards**. Drag the divider between them to resize the left side. Select the **To-dos** or **Documents** heading to collapse or expand it.
 
 **Debug log** has **copy**, **clear** and **hide** buttons and keeps the latest 50 lines. It can include transcript text and answers, so review it before you share it.
@@ -196,7 +198,15 @@ You ask by voice. There is no box for typing questions.
 4. Wait. The app sends the question, with Context, matching document excerpts and market figures, to your AI provider. It speaks a short answer and adds a **board member** card with it.
 5. Before asking another question, pause for at least 8 seconds. A second question run into the same stretch of speech can be ignored.
 
-Speaking needs voice files that your browser downloads from the internet the first time. With **Whisper**, the app ignores audio captured while it is speaking. **There is no mute button for the spoken voice:** **Stop** stops the microphone, not an answer already playing. Use your computer's volume or mute control to silence it at once. If no answer comes, open **Debug log**.
+Speaking needs voice files that your browser downloads from the internet the first time. With **Whisper**, the app ignores audio captured while it is speaking. If no answer comes, open **Debug log**.
+
+### Mute the spoken voice
+
+1. Select **Mute voice**, the button in the bottom-right corner of the screen. Speech that is playing stops at once. The button stays on top of panels, dialogs and presenter view.
+2. While the button shows **Voice muted · Unmute**, nothing is spoken. An answer that was still being prepared when you muted is not played, even if you unmute before it is ready.
+3. To allow speech again, select **Voice muted · Unmute**. Speech that you stopped does not resume. If the app is still waiting for the AI's reply when you unmute, that reply is spoken.
+
+Muting affects only the app's spoken voice. It does not stop the microphone, transcription, cards or AI requests: answers still appear as **board member** cards. **Stop** stops the microphone, not the spoken voice. Your browser remembers the mute setting after you reload the page.
 
 The wake word is matched as text anywhere in the speech, so saying it in ordinary conversation can trigger an answer to the words that follow.
 
@@ -207,7 +217,7 @@ With **Anthropic (Claude)** as provider, during a meeting you are listening to, 
 1. In **Settings**, choose **Injection mode** and select **Save**:
    - **Ask-only** (default): research is kept quietly and can be used when you ask a question.
    - **Suggest & approve**: when research is ready, a banner says that your wake-word name "wants to mention" it.
-2. Select **Speak** to hear the summary and add it as a card.
+2. Select **Speak** to hear the summary and add it as a card. While the voice is muted, **Speak** only adds the card.
 3. Select **Dismiss** to keep it silent. **Dismiss still adds the summary as a card.**
 
 These summaries do not reliably show the web pages they came from.
@@ -217,7 +227,7 @@ These summaries do not reliably show the web pages they came from.
 The orb shows whether the app is idle, listening, thinking or speaking. It is a status light, not an avatar.
 
 1. Select the orb on the toolbar to open presenter view. It shows a large orb and one of **Idle**, **Listening…**, **Thinking…** or **Speaking…**.
-2. To leave, select **Exit presenter view**, click anywhere, or press Esc.
+2. To leave, select **Exit presenter view**, click anywhere else, or press Esc. **Mute voice** stays available and does not close the view.
 
 Presenter view does not tell participants what is being captured. Tell them yourself.
 
@@ -401,7 +411,6 @@ The app also contacts outside services without meeting content: market data (EIA
 - **Local use:** meeting text can leave your network, as listed above.
 - **Sources:** cards and spoken answers do not reliably name their sources.
 - **Asking:** voice only. No typed questions.
-- **Muting:** no control stops or mutes a spoken answer that is already playing.
 - **Speakers:** no speaker identification. **Others only** does not keep your words out of cards.
 - **Materials:** the app makes cards and an action-item list. It does not create plans, documents, slides or code changes.
 - **Memory:** no memory carries over from one meeting to the next. Live transcript and to-dos are not cleared automatically between meetings.

@@ -26,6 +26,7 @@ This file is an index. It is not a knowledge article.
 - [How do I choose the microphone and transcription settings?](audio-and-recording.md)
 - [How do I manage insight cards?](use-cards.md)
 - [How do I ask Meeteor a spoken question?](ask-a-question.md)
+- [How do I mute Meeteor's spoken voice?](mute-voice.md)
 - [How do company research and suggestions work?](research-suggestions.md)
 - [How do I show the Meeteor status orb to the room?](presenter-view.md)
 - [How do I use the room camera, and what does it detect?](room-camera.md)
