@@ -1,18 +1,18 @@
 ---
-title: Get started with Meeteor
+title: How do I get started with Meeteor?
 product: Meeteor
 version: 2.1.0
-tags: [getting-started, account]
-applies_to: Sign-in screen and desktop app
+tags: [getting-started, setup]
+applies_to: Sign-in screen, Settings, main screen
 ---
 
 ## Short answer
-Open the app, sign in or register, configure your available AI provider, and obtain meeting consent before capture.
+Open the app, sign in, save an OpenAI or Anthropic API key, get everyone's consent, then select **Record** and **Start listening**. The screens show the name **Meetintel**.
 
 ## Steps
-1. Open the address supplied by your administrator; the default local server is `http://localhost:7432`.
-2. Sign in with your account, or use the registration tab. The desktop app opens as a local user.
-3. Open **Settings**, choose OpenAI or Anthropic and a model, enter the corresponding API key through the approved setup process, and select **Save**.
-4. Before using **Start listening** or **Record A/V**, inform all participants and obtain the required consent.
-
-The current app does not enforce a consent gate. See the [user manual](../user-manual/README.md).
+1. Web app: open the address your administrator gave you (a local server on the default port is `http://localhost:7432`). Select **Create account**, or sign in. Desktop app: start it and activate your license if asked; it has no sign-in.
+2. In **Settings**, choose the **AI Provider** and **Model**, paste the matching API key and select **Save**.
+3. Tell every participant that an AI is present and get the consent your meeting requires. The app does not ask for you. This build sends meeting text to the AI provider you choose.
+4. Enter a **Session title** and select **Record** to create the saved meeting.
+5. Select **Start listening** and allow microphone access. The transcript appears in **Live transcript**, and cards appear in **Insight cards** as topics are detected.
+6. When finished, select **Stop**, wait a few seconds, then select **End**.

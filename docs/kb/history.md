@@ -1,15 +1,18 @@
 ---
-title: Review or delete a past meeting
+title: How do I review a past meeting?
 product: Meeteor
 version: 2.1.0
-tags: [history, transcript, recording]
+tags: [history, transcript]
 applies_to: Meeting history panel
 ---
 
 ## Short answer
-Open **History** to review saved cards and transcript, and a recording when available.
+Open **History** and choose a meeting to read its cards and transcript, or play a desktop recording.
 
 ## Steps
-1. Select **History** on the toolbar and choose a meeting.
-2. Choose **Cards** or **Transcript**. If a desktop A/V file is attached, choose **Recording** to play it or **Generate transcript**.
-3. Select the trash button in meeting detail only if you intend to delete the meeting. This also removes its cards, cached research and recording. If the recording file cannot be deleted, an error appears and the meeting is kept; close anything using the file and try again.
+1. Select **History** (clock icon).
+2. Select a meeting. The list shows start time, duration or **in progress**, words and cards; the card count can include deleted cards.
+3. Select **Cards** or **Transcript**.
+4. If a **Recording** tab is shown in the desktop app, open it to play the recording.
+5. Use the back arrow for the list, or the close button for the live screen.
+6. To-dos are not shown in History. Nothing from a past meeting carries into the next one.
