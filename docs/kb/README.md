@@ -64,6 +64,24 @@ This file is an index. It is not a knowledge article.
 **Which files to add:** every file linked under [Sulenna knowledge articles](#sulenna-knowledge-articles), one article per file. **Do not add** the user manual, the administrator guide, this index, anything under `docs/decisions/` or `docs/market/`, or `docs/feature-inventory.md`. Both manuals are longer than Sulenna's 16,000-character article limit. The articles carry the customer help; the manuals are the full references, and the administrator guide is not for a customer-facing tenant.
 
 1. In the repository folder, run `node docs/validate-help.js` and fix any failure. It checks front matter, article sections, this index, links, Sulenna title, size and tag-length limits, use of the product name, and obvious keys or email addresses. It does not check that the text matches the app.
+2. Run the dry run, `npm run kb:sync`. It loads every article, checks the tenant settings in `config/tenant.sulenna.json`, and estimates offline which article each question in `config/sulenna-sync.json` ranks first. It contacts no server and needs no key.
+3. To load and check, set `AGENTA_URL` (https, or http on the same computer) and `AGENTA_ADMIN_KEY` in the environment, then run `node scripts/kb-sync.js --apply`. The server must accept the admin key. Never put the key in a file or on the command line.
+
+`--apply` does the following:
+
+- It uses the tenant with id `meeteor`, or the one named `Meeteor`. It creates the tenant from the settings file only when neither exists, and never changes an existing tenant. A single-business pilot server refuses to create a tenant other than its own.
+- It looks up existing article ids first, by id and then by title. It updates changed articles in place, keeps their SKU and source link, writes nothing for unchanged ones, and stops before writing any article if two published articles share a title. Each file is published, including one that was unpublished by hand.
+- It warns about published Meeteor articles that have no file. Unpublish those by hand.
+- It then asks each answer-check question as a customer would and fails unless the reply cites the expected article. Each run opens one support case per question in the tenant.
+- If the server reports a rate limit, wait a minute and run it again.
+
+The settings use `demo` inference, which cites only the article ranked first. Ties go to the lower article id and Sulenna does not match word forms, so a short question can cite a broader article. In the offline estimate, the exact titles of `mute-voice.md`, `no-transcript.md` and `microsoft-to-do.md` rank another article first; their answer checks use more specific wording.
+
+### Load by hand
+
+Use these steps only without the admin key.
+
+1. Run `node docs/validate-help.js` and fix any failure.
 2. Sign in to the Sulenna admin workspace, select the Meeteor tenant, and open **Knowledge**.
 3. Under **Add an article**, fill in the form from one file:
 
@@ -80,15 +98,15 @@ This file is an index. It is not a knowledge article.
 5. Repeat steps 3 and 4 for every article. Check that **Knowledge library** shows each title once, marked **Published**.
 6. In a support chat for the tenant, with product `Meeteor` and version `2.1.0`, ask "How do I get started with Meeteor?", "Does my meeting data leave my computer?" and "What are the known limitations of this version?" Confirm that the cited sources are `getting-started.md`, `data-privacy.md` and `known-limitations.md`, matched by title.
 
-No automated sync script exists in this repository. Loading and answer checks are separate release steps; they have **not** been run for these files. The screen and field names above were read from the Sulenna source code, not tried on a running installation.
+Loading and answer checks have **not** been run against a Sulenna server for these files. The script's server calls and the screen and field names above were read from the Sulenna source code, not tried on a running installation.
 
 ## When to refresh
 
 Refresh whenever a release changes a screen, button label, message, command, limit, data flow, limitation or the supported version.
 
-1. Update the affected articles, the manuals and this index together. When the supported version changes, also update `version` in every article, the version in `docs/validate-help.js`, and the version in the loading steps above.
-2. Run the validator.
-3. Add new files as described above.
+1. Update the affected articles, the manuals and this index together. When the supported version changes, also update `version` in every article, the version in `docs/validate-help.js` and `config/sulenna-sync.json`, and the version in the loading steps above.
+2. Run the validator and the dry run.
+3. With the admin key, run `--apply` again; it covers new and changed files. The next two steps are for loading by hand.
 4. For a changed file, update the existing tenant article. The **Knowledge** page cannot edit or delete an article. A Sulenna administrator can update one in place through the admin API: find its `id` in `GET /api/admin/workspace`, then send the complete article with that same `id` to `POST /api/admin/articles` (`id`, `tenantId`, `title`, `product`, `version`, `body`, `sourceUrl`, `published`, `tags`, `sku`). Keep the existing `sku` value. An empty `id` creates a duplicate. Without API access, select **Unpublish** on the old article, then add the new text as a new article.
 5. If a file no longer exists, select **Unpublish** on its tenant article. Unpublished articles are not used in answers. `license-and-errors.md` has been replaced by several single-problem articles; if an earlier copy was loaded, unpublish it.
 6. Repeat the answer checks.
