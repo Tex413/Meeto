@@ -205,6 +205,17 @@ html, body {
 .presenter-exit:hover { background: var(--surface3); color: var(--text); }
 .presenter-hint { position: absolute; bottom: 26px; font-size: 12px; color: var(--text3); }
 
+/* ── Voice mute (above presenter view and every overlay) ── */
+.voice-mute {
+  position: fixed; right: 18px; bottom: 18px; z-index: 3000;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface2); border: 1px solid var(--border2); color: var(--text);
+  font-size: 13px; font-weight: 600; padding: 9px 15px; border-radius: 99px; cursor: pointer;
+  font-family: inherit; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+}
+.voice-mute:hover { background: var(--surface3); }
+.voice-mute.muted { background: linear-gradient(var(--danger-bg), var(--danger-bg)), var(--surface2); border-color: var(--danger-border); color: var(--danger-text); }
+
 /* ── Suggestion banner (suggest & approve mode) ── */
 .suggestion-banner {
   position: fixed; bottom: 24px; left: 50%;
@@ -1057,6 +1068,13 @@ html, body {
   </div>
 </div>
 
+<!-- Instant voice mute: outside every panel and stacked above presenter view, so it is always reachable.
+     Declared before the script so the saved mute state shows as soon as the page runs. -->
+<button type="button" class="voice-mute" id="voiceMuteBtn" onclick="toggleVoiceMute()" aria-pressed="false" title="Stop the spoken voice at once and keep it silent until you unmute">
+  <i class="ti ti-volume" id="voiceMuteIcon" aria-hidden="true"></i> <span id="voiceMuteLabel">Mute voice</span>
+</button>
+
+<script src="/speech-mute.js"></script>
 <script>
 const APP_BUILD = '__BUILD__';
 const IS_DESKTOP = ('__DESKTOP__' === '1');   // injected by server; A/V recording is desktop-only
@@ -2692,26 +2710,32 @@ function prewarmPiper() {
     if (p.total) dbg('Piper voice download: ' + Math.round(p.loaded * 100 / p.total) + '% — ' + p.url);
   })).catch(e => dbg('Piper pre-warm failed: ' + e.message));
 }
-async function speakAnswer(text) {
-  try {
-    const piper = await getPiper();
-    const wav = await piper.predict({ text, voiceId: PIPER_VOICE });
-    const audio = new Audio(URL.createObjectURL(wav));
-    audio.onplay = () => { _speaking = true; setPresenceState('speaking'); };
-    const done = (why) => {
-      _speaking = false;
-      dbg('Piper TTS ' + why);
-      URL.revokeObjectURL(audio.src);
-      setPresenceState(listening ? 'listening' : 'idle');
-    };
-    audio.onended = () => done('finished');
-    audio.onerror = () => done('playback error');
-    await audio.play();
-  } catch(e) {
-    dbg('Piper TTS failed: ' + e.message);
-    setPresenceState(listening ? 'listening' : 'idle');
-  }
+const spokenAudio = createSpokenAudio({
+  synthesize: async text => (await getPiper()).predict({ text, voiceId: PIPER_VOICE }),
+  createAudio: url => new Audio(url),
+  createUrl: wav => URL.createObjectURL(wav),
+  revokeUrl: url => URL.revokeObjectURL(url),
+  storage: localStorage,
+  onPlaying: () => { _speaking = true; setPresenceState('speaking'); },
+  onIdle: () => { _speaking = false; setPresenceState(listening ? 'listening' : 'idle'); },
+  log: message => dbg(message),
+});
+function speakAnswer(text) {
+  return spokenAudio.speak(text);
 }
+function renderVoiceMute() {
+  const muted = spokenAudio.isMuted();
+  const btn = document.getElementById('voiceMuteBtn');
+  btn.classList.toggle('muted', muted);
+  btn.setAttribute('aria-pressed', String(muted));
+  document.getElementById('voiceMuteIcon').className = muted ? 'ti ti-volume-off' : 'ti ti-volume';
+  document.getElementById('voiceMuteLabel').textContent = muted ? 'Voice muted · Unmute' : 'Mute voice';
+}
+function toggleVoiceMute() {
+  spokenAudio.setMuted(!spokenAudio.isMuted());
+  renderVoiceMute();
+}
+renderVoiceMute();
 
 // LLM refine pass over finalized turns. Layered on top of the local correction.
 // Runs on the analysis cadence; only touches settled turns; gated by the toggle.
