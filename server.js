@@ -4,6 +4,11 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const { Worker } = require('worker_threads');
+const { createLicensing, CHECKOUT_PRODUCT } = require('./license');
+const { describeError, redactLogFile } = require('./log-redaction');
+const { createMeetingDeleter } = require('./meeting-delete');
+const { createLocalControlGuard, resolveLocalControlSettings } = require('./local-control');
+const consentGate = require('./consent-gate');
 
 // ── Version / build ──────────────────────────────────────────
 // Bump BUILD on every deploy so you can confirm in the UI that fresh code
@@ -18,8 +23,14 @@ const IS_HTTPS = PUBLIC_URL.startsWith('https://');
 // Desktop (Electron) mode: single local user, no login/registration. Set by main.js.
 // When off (hosted/web demo), all the multi-user/auth behavior is unchanged.
 const DESKTOP_MODE = process.env.DESKTOP_MODE === '1';
+// Desktop mode has no login, so only this machine may connect. Hosted and Docker installs must stay reachable.
+const HOST = DESKTOP_MODE ? '127.0.0.1' : '0.0.0.0';
 // Unpackaged dev build (set by main.js): bypass license gates for local testing.
 const DESKTOP_DEV = process.env.DESKTOP_DEV === '1';
+// Off in every sold build until counsel answers (docs/decisions/consent-legal-review.md).
+const ROOM_CAMERA_ENABLED = consentGate.roomCameraEnabled(
+  { env: process.env, desktop: DESKTOP_MODE, desktopDev: DESKTOP_DEV });
+const CONSENT_SCRIPTS = new Set(['/consent-client.js', '/consent-prompt.js']);
 let LOCAL_USER_ID = 1; // resolved during initDb when DESKTOP_MODE is on
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'meetintel.sqlite');
@@ -43,8 +54,15 @@ function log(...args) {
   console.log(line);
   try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch(e) {}
 }
-process.on('uncaughtException', e => log('UNCAUGHT', e.stack || e.message));
-process.on('unhandledRejection', e => log('UNHANDLED', e?.stack || e));
+process.on('uncaughtException', e => log('UNCAUGHT', describeError(e)));
+process.on('unhandledRejection', e => log('UNHANDLED', describeError(e)));
+// Earlier builds logged transcript text. Redact it before this run adds anything.
+try {
+  const redactedCount = redactLogFile(LOG_FILE);
+  if (redactedCount) log(`Redacted transcript text from ${redactedCount} existing log lines`);
+} catch (e) {
+  log('WARNING: could not redact transcript text from the existing log:', e.code || e.message);
+}
 
 // ── sqlite ─────────────────────────────────────────────────────
 const initSqlJs = require('sql.js');
@@ -142,6 +160,8 @@ async function initDb() {
     expires_at TEXT
   )`);
 
+  consents.migrate();
+
   // migrations for existing DBs
   const migrate = sql => { try { db.run(sql); } catch(e) {} };
   migrate('ALTER TABLE meetings ADD COLUMN user_id INTEGER DEFAULT 1');
@@ -197,19 +217,44 @@ function dbGet(sql, params = []) {
   return row;
 }
 
+// ── meeting consent gate (consent-gate.js) ─────────────────────
+const consents = consentGate.createConsentStore({ getDb: () => db, save: saveDb });
+
+function consentDestination(userId) {
+  const settings = dbGet(
+    'SELECT ai_provider, anthropic_key, openai_key, msft_tokens FROM user_settings WHERE user_id = ?', [userId]);
+  return consentGate.destinationFor({ settings, desktop: DESKTOP_MODE });
+}
+
+const handleConsent = consentGate.createConsentRouter({
+  store: consents,
+  sendJson: json,
+  readBody,
+  ownsMeeting: (meetingId, userId) =>
+    !!dbGet('SELECT id FROM meetings WHERE id = ? AND user_id = ?', [meetingId, userId]),
+  getDestination: consentDestination,
+  cameraEnabled: ROOM_CAMERA_ENABLED,
+});
+
 // ── session auth ───────────────────────────────────────────────
 const sessions = new Map(); // token → { userId, expiry }
 const SESSION_MS = 8 * 60 * 60 * 1000;
 
 // ── local-only recording control (Stream Deck / MCP) ─────────────
-// Deliberately unauthenticated: this only ever lets a process on the SAME machine tell an
-// already-open, already-logged-in browser tab to start/stop listening. It is not reachable from
-// Meeto's hosted multi-user service - isLoopback() is the trust boundary, not a session cookie.
+// No session cookie: this only lets a process on the SAME machine tell an already-open,
+// already-logged-in browser tab to start/stop listening. local-control.js is the trust boundary.
 const localEventClients = new Set();
-function isLoopback(req) {
-  const addr = req.socket.remoteAddress || '';
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+function readLocalControlEnvFile() {
+  try {
+    return fs.readFileSync(ENV_FILE, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') log('WARNING: could not read local control settings from DATA_DIR/.env:', e.code);
+    return '';
+  }
 }
+const localControl = createLocalControlGuard(resolveLocalControlSettings({
+  env: process.env, envFileText: readLocalControlEnvFile(), desktopMode: DESKTOP_MODE,
+}));
 function broadcastLocalEvent(eventName) {
   const payload = `event: ${eventName}\ndata: {}\n\n`;
   for (const clientRes of localEventClients) {
@@ -275,7 +320,10 @@ function cleanupExpiredTrials() {
   for (const [userId] of r[0].values) {
     const mids = db.exec(`SELECT id FROM meetings WHERE user_id = ${userId}`);
     if (mids.length && mids[0].values.length) {
-      for (const [mid] of mids[0].values) db.run(`DELETE FROM cards WHERE meeting_id = ${mid}`);
+      for (const [mid] of mids[0].values) {
+        db.run(`DELETE FROM cards WHERE meeting_id = ${mid}`);
+        consents.remove(mid, userId);
+      }
     }
     db.run(`DELETE FROM meetings WHERE user_id = ${userId}`);
     const dids = db.exec(`SELECT id FROM documents WHERE user_id = ${userId}`);
@@ -325,6 +373,10 @@ async function sendResetEmail(toEmail, token) {
   log('RESET LINK (no SMTP):', url);
   return { emailed: false, url };
 }
+
+const deleteMeeting = createMeetingDeleter({
+  getDb: () => db, dbGet, saveDb, recordingsDir: RECORDINGS_DIR, log, consents,
+});
 
 // ── request helpers ────────────────────────────────────────────
 function readBody(req) {
@@ -686,46 +738,17 @@ function ensureUserSettings(userId) {
   if (!s) db.run(`INSERT INTO user_settings (user_id) VALUES (${userId})`);
 }
 
-// ── Stripe / license helpers ───────────────────────────────────
-function generateLicenseKey(type) {
-  const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
-  const payload = Buffer.from(JSON.stringify({ type, issued: Date.now() })).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-  return `MEETINTEL-${payload}.${sig}`;
-}
-function verifyLicenseKey(key) {
-  try {
-    const secret = loadEnvVar('LICENSE_SECRET') || 'meetintel-dev-secret';
-    const m = key.match(/^MEETINTEL-(.+)\.([A-Za-z0-9_-]+)$/);
-    if (!m) return null;
-    const [, payload, sig] = m;
-    const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url').substring(0, 22);
-    if (sig !== expected) return null;
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  } catch(e) { return null; }
-}
-
 // ── Ed25519 desktop license (offline-verifiable; unforgeable) ──────
-// Keys are minted by the owner with the PRIVATE key (tools/sign-license.js);
-// the app verifies with this embedded PUBLIC key. Format:
-//   MEETINTEL2-<payloadB64url>.<ed25519SigB64url>
+// Keys are signed with the PRIVATE key (fulfilment server, or tools/sign-license.js);
+// the app verifies with this embedded PUBLIC key. Format and signing: license.js.
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAx2WzvIFxDl4HTErb8FJTlzLnP0cbB2KMd5K5S3N4IOM=
 -----END PUBLIC KEY-----`;
 const LICENSE_FILE = path.join(DATA_DIR, 'license.key');
 let _license = null; // cached verified payload (desktop only)
 
-function verifyLicenseV2(key) {
-  try {
-    const m = (key || '').trim().match(/^MEETINTEL2-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
-    if (!m) return null;
-    const [, payloadB64, sigB64] = m;
-    const ok = crypto.verify(null, Buffer.from(payloadB64),
-      crypto.createPublicKey(LICENSE_PUBLIC_KEY), Buffer.from(sigB64, 'base64url'));
-    if (!ok) return null;
-    return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-  } catch(e) { return null; }
-}
+const licensing = createLicensing({ publicKey: LICENSE_PUBLIC_KEY });
+const verifyLicenseV2 = licensing.verify;
 function loadLicense() {
   try { if (fs.existsSync(LICENSE_FILE)) _license = verifyLicenseV2(fs.readFileSync(LICENSE_FILE, 'utf8')); }
   catch(e) { _license = null; }
@@ -943,6 +966,17 @@ const server = http.createServer(async (req, res) => {
     } catch(e) { res.writeHead(404); return res.end('not found'); }
   }
 
+  // Spoken-answer playback and mute, loaded by index.html. Not cached, so it always matches the page.
+  if (req.method === 'GET' && url === '/speech-mute.js') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(fs.readFileSync(path.join(__dirname, 'speech-mute.js')));
+  }
+
+  if (req.method === 'GET' && CONSENT_SCRIPTS.has(url)) {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(fs.readFileSync(path.join(__dirname, url.slice(1))));
+  }
+
   // Local Piper TTS (client-side WASM) — the library itself still fetches the
   // ONNX Runtime Web WASM binaries from cdnjs and voice model weights from
   // HuggingFace at runtime — same "needs internet once, then cached" shape
@@ -1066,12 +1100,15 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const stripeKey = loadEnvVar('STRIPE_SECRET_KEY');
     if (!stripeKey) return json(res, 500, { error: 'Stripe not configured' });
+    // Never take a payment that cannot be fulfilled.
+    if (!licensing.signingReady()) return json(res, 503, { error: 'Checkout is not available yet' });
     try {
       const Stripe = require('stripe');
       const stripe = Stripe(stripeKey);
       const isAnnual = body.plan === 'annual';
       const session = await stripe.checkout.sessions.create({
         mode: isAnnual ? 'subscription' : 'payment',
+        metadata: { product: CHECKOUT_PRODUCT },
         line_items: [{ price_data: {
           currency: 'usd',
           product_data: { name: isAnnual ? 'Meetintel Annual License' : 'Meetintel Lifetime License' },
@@ -1094,10 +1131,8 @@ const server = http.createServer(async (req, res) => {
       try {
         const Stripe = require('stripe');
         const session = await Stripe(stripeKey).checkout.sessions.retrieve(sessionId);
-        if (session.payment_status === 'paid' || session.status === 'complete') {
-          planType = session.mode === 'subscription' ? 'annual' : 'lifetime';
-          licenseKey = generateLicenseKey(planType);
-        }
+        const issued = licensing.issueForCheckout(session);
+        if (issued) ({ key: licenseKey, plan: planType } = issued);
       } catch(e) { log('Stripe success error:', e.message); }
     }
     const html = fs.readFileSync(path.join(__dirname, 'success.html'), 'utf8')
@@ -1125,14 +1160,14 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { received: true });
   }
 
-  // ── local-only recording control (Stream Deck / MCP) - public, but loopback-only ─────
+  // ── local-only recording control (Stream Deck / MCP) - no session, same machine only ──
   if (url === '/api/local/events' && req.method === 'GET') {
-    if (!isLoopback(req)) { res.writeHead(403); return res.end('forbidden'); }
+    // No token here: the tab's EventSource cannot send headers, and the stream carries only start/stop signals.
+    if (!localControl.isDirectLocalRequest(req)) { res.writeHead(403); return res.end('forbidden'); }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      'Connection': 'keep-alive'
     });
     res.write(': connected\n\n');
     localEventClients.add(res);
@@ -1141,7 +1176,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/api/local/start-recording' && req.method === 'POST') {
-    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    const refusal = localControl.refuseCommand(req);
+    if (refusal) return json(res, refusal.status, { error: refusal.error });
     broadcastLocalEvent('start-recording');
     // listeners tells the caller whether any open tab actually received this - the broadcast
     // is fire-and-forget, so `ok: true` alone can't distinguish "a tab is listening" from
@@ -1150,7 +1186,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/api/local/stop-recording' && req.method === 'POST') {
-    if (!isLoopback(req)) return json(res, 403, { error: 'forbidden' });
+    const refusal = localControl.refuseCommand(req);
+    if (refusal) return json(res, refusal.status, { error: refusal.error });
     broadcastLocalEvent('stop-recording');
     return json(res, 200, { ok: true, listeners: localEventClients.size });
   }
@@ -1170,7 +1207,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, htmlHdr);
     return res.end(fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
       .replace(/__BUILD__/g, `${VERSION} build ${BUILD}`)
-      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0'));
+      .replace(/__DESKTOP__/g, DESKTOP_MODE ? '1' : '0')
+      .replace(/__ROOM_CAMERA__/g, ROOM_CAMERA_ENABLED ? '1' : '0'));
   }
 
   // ── all routes below require auth ────────────────────────────
@@ -1180,7 +1218,16 @@ const server = http.createServer(async (req, res) => {
   const user = dbGet(`SELECT * FROM users WHERE id = ${userId}`);
   if (!user) return json(res, 401, { error: 'User not found' });
 
+  if (await handleConsent(req, res, userId)) return;
+
   // ── admin ────────────────────────────────────────────────────
+  // These routes mint licences and take over accounts: only the configured admin account may use
+  // them. Unset means nobody.
+  if (url === '/admin' || url.startsWith('/admin/')) {
+    const adminEmail = (process.env.MEETEOR_ADMIN_EMAIL || loadEnvVar('MEETEOR_ADMIN_EMAIL')).trim().toLowerCase();
+    if (!adminEmail || user.email !== adminEmail) return json(res, 403, { error: 'Administrator access required' });
+  }
+
   if (req.method === 'GET' && url === '/admin') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8'));
@@ -1204,7 +1251,7 @@ const server = http.createServer(async (req, res) => {
     const paid = db.exec("SELECT COUNT(*) FROM users WHERE tier='paid'")[0]?.values[0][0] || 0;
     let dbSize = 0; try { dbSize = fs.statSync(DB_FILE).size; } catch(e) {}
     return json(res, 200, { meetings: mtg, cards: crd, docs: doc, users: usr, paidUsers: paid, dbSize,
-      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'), licenseSecretSet: !!loadEnvVar('LICENSE_SECRET'),
+      stripeConfigured: !!loadEnvVar('STRIPE_SECRET_KEY'), licenseSigningReady: licensing.signingReady(),
       uptime: Math.round(process.uptime()) });
   }
 
@@ -1227,9 +1274,13 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/admin/grant-license') {
     const body = JSON.parse(await readBody(req));
-    const { targetUserId, licenseType } = body;
-    const key = generateLicenseKey(licenseType || 'lifetime');
-    db.run(`UPDATE users SET tier='paid', license_key='${key}', license_type='${licenseType || 'lifetime'}' WHERE id = ${parseInt(targetUserId)}`);
+    const plan = body.licenseType === 'annual' ? 'annual' : 'lifetime';
+    const target = dbGet('SELECT id, email FROM users WHERE id = ?', [parseInt(body.targetUserId, 10) || 0]);
+    if (!target) return json(res, 404, { error: 'User not found' });
+    let key;
+    try { key = licensing.issue({ plan, email: target.email }); }
+    catch(e) { return json(res, 503, { error: e.message }); }
+    db.run('UPDATE users SET tier=\'paid\', license_key=?, license_type=? WHERE id=?', [key, plan, target.id]);
     saveDb();
     return json(res, 200, { ok: true, key });
   }
@@ -1240,7 +1291,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, {
       stripeKey: sk ? sk.substring(0, 7) + '...' + sk.slice(-4) : '',
       webhookSecret: wh ? wh.substring(0, 6) + '...' : '',
-      licenseSecretSet: !!loadEnvVar('LICENSE_SECRET')
+      licenseSigningReady: licensing.signingReady()
     });
   }
 
@@ -1248,18 +1299,18 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     if (body.stripeKey) writeEnvVar('STRIPE_SECRET_KEY', body.stripeKey.trim());
     if (body.webhookSecret) writeEnvVar('STRIPE_WEBHOOK_SECRET', body.webhookSecret.trim());
-    if (body.licenseSecret) writeEnvVar('LICENSE_SECRET', body.licenseSecret.trim());
     return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url === '/admin/generate-key') {
     const body = JSON.parse(await readBody(req));
-    return json(res, 200, { key: generateLicenseKey(body.type === 'annual' ? 'annual' : 'lifetime') });
+    try { return json(res, 200, { key: licensing.issue({ plan: body.type === 'annual' ? 'annual' : 'lifetime' }) }); }
+    catch(e) { return json(res, 503, { error: e.message }); }
   }
 
   if (req.method === 'POST' && url === '/admin/verify-key') {
     const body = JSON.parse(await readBody(req));
-    const info = verifyLicenseKey(body.key || '');
+    const info = verifyLicenseV2(body.key || '');
     return json(res, 200, info ? { valid: true, ...info } : { valid: false });
   }
 
@@ -1390,11 +1441,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url === '/license/activate') {
     const body = JSON.parse(await readBody(req));
-    const info = verifyLicenseKey(body.key || '');
+    const info = verifyLicenseV2(body.key || '');
     if (!info) return json(res, 400, { error: 'Invalid license key' });
-    db.run(`UPDATE users SET tier='paid', license_key='${body.key.replace(/'/g, "''")}', license_type='${info.type}' WHERE id = ${userId}`);
+    db.run('UPDATE users SET tier=\'paid\', license_key=?, license_type=? WHERE id=?', [body.key.trim(), info.plan, userId]);
     saveDb();
-    return json(res, 200, { ok: true, type: info.type });
+    return json(res, 200, { ok: true, type: info.plan });
   }
 
   if (req.method === 'GET' && url === '/trial/status') {
@@ -1435,6 +1486,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     db.run(`UPDATE meetings SET transcript=?, word_count=?, total_cards=?, ended_at=? WHERE id=? AND user_id=${userId}`,
       [body.transcript || '', body.wordCount || 0, body.totalCards || 0, new Date().toISOString(), body.id]);
+    consents.close(Number(body.id) || 0, userId, 'meeting_ended');   // consent never outlives its meeting
     saveDb(); return json(res, 200, { ok: true });
   }
 
@@ -1447,13 +1499,19 @@ const server = http.createServer(async (req, res) => {
     if (!meetingId) return json(res, 400, { error: 'missing meetingId' });
     const own = dbGet(`SELECT id FROM meetings WHERE id=${meetingId} AND user_id=${userId}`);
     if (!own) return json(res, 404, { error: 'meeting not found' });
-    const filename = `meeting-${meetingId}.webm`;
+    const consentId = new URL(req.url, 'http://x').searchParams.get('consentId') || '';
+    const consent = consents.uploadable(meetingId, userId, consentId);
+    if (!consent) {
+      return json(res, 403, { error: 'consent_required', message: 'No consent record covers this recording.' });
+    }
+    // One file per consent record: a re-announcement must not overwrite the earlier part.
+    const filename = `meeting-${meetingId}-${consent.id}.webm`;
     const dest = path.join(RECORDINGS_DIR, filename);
     const ws = fs.createWriteStream(dest);
     req.pipe(ws);
     ws.on('finish', () => {
       db.run(`UPDATE meetings SET recording_path=? WHERE id=${meetingId}`, [filename]);
-      saveDb();
+      consents.saveRecording(consent.id, filename);   // also saves the database
       let size = 0; try { size = fs.statSync(dest).size; } catch(e) {}
       log(`Recording saved: ${dest} (${Math.round(size/1024/1024*10)/10} MB)`);
       return json(res, 200, { ok: true, path: filename, bytes: size });
@@ -1468,7 +1526,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.startsWith('/recording/')) {
     if (!DESKTOP_MODE) return json(res, 404, { error: 'not_found' });
     const id = parseInt(url.split('/')[2]);
-    const row = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
+    const part = new URL(req.url, 'http://x').searchParams.get('part');
+    const row = part
+      ? consents.find(id || 0, userId, part)
+      : dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
     if (!row || !row.recording_path) return json(res, 404, { error: 'no recording' });
     const file = path.join(RECORDINGS_DIR, row.recording_path);
     if (!fs.existsSync(file)) return json(res, 404, { error: 'file missing' });
@@ -1533,19 +1594,12 @@ const server = http.createServer(async (req, res) => {
     const meeting = {}; m[0].columns.forEach((col, i) => meeting[col] = m[0].values[0][i]);
     const cardCols = c.length ? c[0].columns : [];
     const cards = c.length ? c[0].values.map(r => { const card = {}; cardCols.forEach((col, i) => card[col] = r[i]); return card; }) : [];
-    return json(res, 200, { meeting, cards });
+    return json(res, 200, { meeting, cards, consents: consents.list(id, userId) });
   }
 
   if (req.method === 'DELETE' && url.startsWith('/meeting/')) {
-    const id = parseInt(url.split('/')[2]);
-    // Remove the recording file too (scoped to the user's own meeting).
-    const own = dbGet(`SELECT recording_path FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    if (own && own.recording_path) {
-      try { fs.unlinkSync(path.join(RECORDINGS_DIR, own.recording_path)); } catch(e) {}
-    }
-    db.run(`DELETE FROM cards WHERE meeting_id=${id}`);
-    db.run(`DELETE FROM meetings WHERE id=${id} AND user_id=${userId}`);
-    saveDb(); return json(res, 200, { ok: true });
+    const result = deleteMeeting(parseInt(url.split('/')[2]), userId);
+    return json(res, result.status, result.body);
   }
 
   if (req.method === 'GET' && url === '/export/csv') {
@@ -1590,7 +1644,7 @@ const server = http.createServer(async (req, res) => {
         parsedBody.model = model;
         log('proxy: Anthropic provider, model=' + model);
         const result = await proxyAnthropic(JSON.stringify(parsedBody), apiKey);
-        log('proxy: Anthropic response', result.status, result.body.substring(0, 80));
+        log('proxy: Anthropic response', result.status);
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       } else {
@@ -1611,7 +1665,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(result.status, { 'Content-Type': 'application/json' });
         return res.end(result.body);
       }
-    } catch(e) { log('proxy error:', e.message); return json(res, 500, { error: e.message }); }
+    } catch(e) {
+      log('proxy error:', e instanceof SyntaxError ? describeError(e) : e.message);
+      return json(res, 500, { error: e.message });
+    }
   }
 
   // ── Transcription (local Whisper — offline, no API key, no per-use cost) ──
@@ -1619,8 +1676,16 @@ const server = http.createServer(async (req, res) => {
     if (DESKTOP_MODE && !isLicensed()) return json(res, 402, { error: 'license_required' });
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
-    const body = JSON.parse(await readBody(req));
-    const { audio, sampleRate = 16000, context = '' } = body;
+    let body;
+    // Not logged: a JSON parse error quotes its input.
+    try { body = JSON.parse(await readBody(req)); } catch (_) { return json(res, 400, { error: 'invalid_json' }); }
+    const { audio, sampleRate = 16000, context = '', consentId = '', source = 'live' } = body || {};
+    const consentRefusal = inFlight => consents.transcriptionRefusal({
+      meetingId: Number(body?.meetingId) || 0, userId, consentId: String(consentId), source,
+      destinationKey: consentDestination(userId).key, inFlight,
+    });
+    const refused = consentRefusal(false);
+    if (refused) return json(res, 403, { error: 'consent_required', message: refused });
     if (!audio || !audio.length) return json(res, 200, { text: '' });
     try {
       const buf = Buffer.from(audio, 'base64');
@@ -1633,11 +1698,14 @@ const server = http.createServer(async (req, res) => {
       // The buffer is transferred (zero-copy), not cloned; audioData itself is
       // detached and unusable on this thread after this call.
       const { text: whisperText } = await runInWorker('transcribe', { audioData, sampleRate }, [audioData.buffer]);
+      // Consent withdrawn while this was transcribing: return nothing.
+      const withdrawn = consentRefusal(true);
+      if (withdrawn) return json(res, 403, { error: 'consent_required', message: withdrawn });
       const raw = whisperText || '';
       // local "grammar file": fuzzy-correct toward the user's domain vocabulary
       const text = correctTranscript(raw, context);
-      if (text !== raw) log('Transcribe corrected: ' + JSON.stringify(raw) + ' → ' + JSON.stringify(text));
-      log('Transcribe: ' + sampleCount + ' samples @ ' + sampleRate + ' Hz → ' + JSON.stringify(text));
+      // Never log transcript text. sampleRate is client input, so only its numeric value is logged.
+      log(`Transcribe: ${sampleCount} samples @ ${Number(sampleRate)} Hz`);
       // track trial usage
       if (user.tier === 'trial') {
         const newUsed = Math.min((user.trial_seconds_used || 0) + Math.ceil(audioSeconds), TRIAL_SECONDS + 60);
@@ -1659,7 +1727,9 @@ const server = http.createServer(async (req, res) => {
     const ts = trialStatus(user);
     if (!ts.ok) return json(res, 402, { error: 'trial_expired' });
     ensureUserSettings(userId);
-    const { text = '', context = '' } = JSON.parse(await readBody(req));
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch (_) { return json(res, 400, { error: 'invalid_json' }); }
+    const { text = '', context = '' } = body || {};
     const wc = text.trim().split(/\s+/).filter(Boolean).length;
     if (wc < 4) return json(res, 200, { text });               // not worth a call
     const system = 'You fix speech-to-text transcription errors. Return ONLY the corrected transcript text, nothing else. '
@@ -1673,7 +1743,6 @@ const server = http.createServer(async (req, res) => {
       max_tokens: Math.min(1024, Math.ceil(text.length / 2) + 64)
     });
     const out = (corrected && corrected.trim()) ? corrected.trim() : text;
-    if (out !== text) log('Refine: ' + JSON.stringify(text) + ' → ' + JSON.stringify(out));
     return json(res, 200, { text: out });
   }
 
@@ -1823,10 +1892,15 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('not found');
 });
 
-const serverReady = new Promise(resolve => {
+const serverReady = new Promise((resolve, reject) => {
   initDb().then(() => {
-    server.listen(PORT, '0.0.0.0', () => {
-      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
+    // A busy port must reach the caller, not just the log.
+    server.once('error', reject);
+    server.listen(PORT, HOST, () => {
+      server.off('error', reject);
+      const localControlNotice = localControl.startupNotice();
+      if (localControlNotice) log(localControlNotice);
+      log(`Meetintel v${VERSION} build ${BUILD} running at http://${HOST}:${PORT}`);
       resolve();
       // Spawn the inference worker now so Whisper/embedder are warm (it logs
       // 'Inference worker ready' itself) before the first real request needs them.
@@ -1838,7 +1912,15 @@ const serverReady = new Promise(resolve => {
       setTimeout(() => refreshStockPrice('BKV'), 35_000);
       setInterval(() => refreshStockPrice('BKV'), 5 * 60 * 1000);
     });
-  });
+  }, reject);
 });
+
+// Run directly, a server that cannot start must exit: the log-only error handlers and timers would keep it alive.
+if (require.main === module) {
+  serverReady.catch(error => {
+    log('Server could not start:', describeError(error));
+    process.exit(1);
+  });
+}
 
 module.exports = { serverReady };
