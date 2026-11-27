@@ -22,6 +22,8 @@ const IS_HTTPS = PUBLIC_URL.startsWith('https://');
 // Desktop (Electron) mode: single local user, no login/registration. Set by main.js.
 // When off (hosted/web demo), all the multi-user/auth behavior is unchanged.
 const DESKTOP_MODE = process.env.DESKTOP_MODE === '1';
+// Desktop mode has no login, so only this machine may connect. Hosted and Docker installs must stay reachable.
+const HOST = DESKTOP_MODE ? '127.0.0.1' : '0.0.0.0';
 // Unpackaged dev build (set by main.js): bypass license gates for local testing.
 const DESKTOP_DEV = process.env.DESKTOP_DEV === '1';
 let LOCAL_USER_ID = 1; // resolved during initDb when DESKTOP_MODE is on
@@ -1828,12 +1830,15 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('not found');
 });
 
-const serverReady = new Promise(resolve => {
+const serverReady = new Promise((resolve, reject) => {
   initDb().then(() => {
-    server.listen(PORT, '0.0.0.0', () => {
+    // A busy port must reach the caller, not just the log.
+    server.once('error', reject);
+    server.listen(PORT, HOST, () => {
+      server.off('error', reject);
       const localControlNotice = localControl.startupNotice();
       if (localControlNotice) log(localControlNotice);
-      log(`Meetintel v${VERSION} build ${BUILD} running at http://0.0.0.0:${PORT}`);
+      log(`Meetintel v${VERSION} build ${BUILD} running at http://${HOST}:${PORT}`);
       resolve();
       // Spawn the inference worker now so Whisper/embedder are warm (it logs
       // 'Inference worker ready' itself) before the first real request needs them.
@@ -1845,7 +1850,15 @@ const serverReady = new Promise(resolve => {
       setTimeout(() => refreshStockPrice('BKV'), 35_000);
       setInterval(() => refreshStockPrice('BKV'), 5 * 60 * 1000);
     });
-  });
+  }, reject);
 });
+
+// Run directly, a server that cannot start must exit: the log-only error handlers and timers would keep it alive.
+if (require.main === module) {
+  serverReady.catch(error => {
+    log('Server could not start:', describeError(error));
+    process.exit(1);
+  });
+}
 
 module.exports = { serverReady };

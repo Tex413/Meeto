@@ -77,7 +77,8 @@ async function startServer(t, { dataDir, env = {} }) {
     };
     child.stdout.on('data', watch);
     child.stderr.on('data', watch);
-    child.on('exit', code => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${output}`)); });
+    // 'close', not 'exit': it waits for the output that says why the server stopped.
+    child.on('close', code => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${output}`)); });
   });
   return {
     port,
