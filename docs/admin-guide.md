@@ -1,6 +1,6 @@
 # Meeteor administrator guide
 
-Supported application runtime: **2.1.0** (`GET /version`). The package and Windows installer identify themselves as **Meetintel 2.0.0**; the Docker image and Compose service are named `meetintel`. These labels are all in this repository and do not mark a separate release.
+Supported application runtime: **2.1.0** (`GET /version`). Meeteor's package and Windows installer carry the label `Meetintel` and version `2.0.0`; the Docker image and Compose service are named `meetintel`. Some screens, buttons and file names use the same label, and this guide quotes it only where you need to match it exactly. These labels do not mark a separate product or release.
 
 ## Read before you deploy
 

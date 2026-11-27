@@ -7,7 +7,7 @@ applies_to: Sign-in screen, Settings, main screen
 ---
 
 ## Short answer
-Open the app, sign in, save an OpenAI or Anthropic API key, get everyone's consent, then select **Record** and **Start listening**. The screens show the name **Meetintel**.
+Open the app, sign in, save an OpenAI or Anthropic API key, get everyone's consent, then select **Record** and **Start listening**. If a Meeteor screen shows the label `Meetintel`, you are in the right app.
 
 ## Steps
 1. Web app: open the address your administrator gave you (a local server on the default port is `http://localhost:7432`). Select **Create account**, or sign in. Desktop app: start it and activate your license if asked; it has no sign-in.

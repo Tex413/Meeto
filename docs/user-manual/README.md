@@ -1,6 +1,6 @@
 # Meeteor user manual
 
-Product: **Meeteor**. Supported runtime: **2.1.0**. The screens, installer, license keys and some messages say **Meetintel**; this manual quotes on-screen text exactly. It describes the application as built. Features that are planned but not built are listed under [Known limitations](#known-limitations).
+Product: **Meeteor**. Supported runtime: **2.1.0**. Meeteor's screens, installer, license keys and some messages show the label `Meetintel`; this manual quotes on-screen text exactly. It describes the application as built. Features that are planned but not built are listed under [Known limitations](#known-limitations).
 
 Contents:
 

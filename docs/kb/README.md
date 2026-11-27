@@ -1,6 +1,6 @@
 # Meeteor help index
 
-Product: **Meeteor**. Supported application runtime: **2.1.0** (`GET /version`). The current screens and installer use the name **Meetintel**. These files describe the features in this repository, not planned features.
+Product: **Meeteor**. Supported application runtime: **2.1.0** (`GET /version`). Some of its current screens and its installer show the label `Meetintel`; the help files quote that label only where a reader needs to match it. These files describe the features in this repository, not planned features.
 
 This file is an index. It is not a knowledge article.
 
@@ -61,22 +61,36 @@ This file is an index. It is not a knowledge article.
 
 ## Load into Sulenna
 
-1. Run `node docs/validate-help.js` and fix any failure. It checks front matter, article sections, this index, links, size limits for Sulenna ingestion, and obvious keys or email addresses. It does not check that the text matches the app.
-2. In the Meeteor tenant, add each file under **Sulenna knowledge articles** as one article. Use its front matter `title` and `tags`, product **Meeteor**, version **2.1.0**, and keep the front matter with the content (it carries `applies_to`).
-3. **Add the articles only.** Each manual is longer than the 16,000-character article limit recorded for Sulenna ingestion when these files were written. Keep the user manual as the maintainers' full reference. Do not load the administrator guide into a customer-facing tenant.
-4. Do not load this index, or anything under `docs/decisions/`, `docs/market/` or `docs/feature-inventory.md`.
-5. Ask a getting-started question, "Does my meeting data leave my computer?", and a known-limitation question. Confirm each answer comes from the right article.
+**Which files to add:** every file linked under [Sulenna knowledge articles](#sulenna-knowledge-articles), one article per file. **Do not add** the user manual, the administrator guide, this index, anything under `docs/decisions/` or `docs/market/`, or `docs/feature-inventory.md`. Both manuals are longer than Sulenna's 16,000-character article limit. The articles carry the customer help; the manuals are the full references, and the administrator guide is not for a customer-facing tenant.
 
-No automated sync script exists in this repository. Loading and answer checks are separate release steps; they have **not** been run for these files.
+1. In the repository folder, run `node docs/validate-help.js` and fix any failure. It checks front matter, article sections, this index, links, Sulenna title, size and tag-length limits, use of the product name, and obvious keys or email addresses. It does not check that the text matches the app.
+2. Sign in to the Sulenna admin workspace, select the Meeteor tenant, and open **Knowledge**.
+3. Under **Add an article**, fill in the form from one file:
+
+   | Form field | Value |
+   | --- | --- |
+   | **Title** | The front matter `title` |
+   | **Product (blank = all)** | `Meeteor` |
+   | **Version (blank = all)** | `2.1.0` |
+   | **Instructions** | The whole file, including the front matter (it carries `applies_to`) |
+   | **Official source URL (optional)** | Leave blank |
+   | **Tags (comma-separated, up to 10)** | The front matter `tags`, without the square brackets |
+
+4. Review the content, keep **I have reviewed this content for publication** selected, and select **Save article**.
+5. Repeat steps 3 and 4 for every article. Check that **Knowledge library** shows each title once, marked **Published**.
+6. In a support chat for the tenant, with product `Meeteor` and version `2.1.0`, ask "How do I get started with Meeteor?", "Does my meeting data leave my computer?" and "What are the known limitations of this version?" Confirm that the cited sources are `getting-started.md`, `data-privacy.md` and `known-limitations.md`, matched by title.
+
+No automated sync script exists in this repository. Loading and answer checks are separate release steps; they have **not** been run for these files. The screen and field names above were read from the Sulenna source code, not tried on a running installation.
 
 ## When to refresh
 
 Refresh whenever a release changes a screen, button label, message, command, limit, data flow, limitation or the supported version.
 
-1. Update the affected articles, the manuals and this index together. Update `version` in every article when the supported version changes, and the version in `docs/validate-help.js`.
+1. Update the affected articles, the manuals and this index together. When the supported version changes, also update `version` in every article, the version in `docs/validate-help.js`, and the version in the loading steps above.
 2. Run the validator.
-3. Update existing articles in the tenant instead of adding duplicates.
-4. **Remove tenant articles whose file no longer exists.** `license-and-errors.md` has been replaced by several single-problem articles; if an earlier copy was loaded, remove it.
-5. Repeat the answer checks.
+3. Add new files as described above.
+4. For a changed file, update the existing tenant article. The **Knowledge** page cannot edit or delete an article. A Sulenna administrator can update one in place through the admin API: find its `id` in `GET /api/admin/workspace`, then send the complete article with that same `id` to `POST /api/admin/articles` (`id`, `tenantId`, `title`, `product`, `version`, `body`, `sourceUrl`, `published`, `tags`, `sku`). Keep the existing `sku` value. An empty `id` creates a duplicate. Without API access, select **Unpublish** on the old article, then add the new text as a new article.
+5. If a file no longer exists, select **Unpublish** on its tenant article. Unpublished articles are not used in answers. `license-and-errors.md` has been replaced by several single-problem articles; if an earlier copy was loaded, unpublish it.
+6. Repeat the answer checks.
 
 The help files contain no credentials or customer records. Check any deployment-specific addition before loading it.

@@ -68,6 +68,14 @@ for (const file of [path.join(DOCS, 'admin-guide.md'), path.join(DOCS, 'user-man
 for (const manual of ['../user-manual/README.md', '../admin-guide.md']) {
   if (!index.includes(`](${manual})`)) failures.push(`Index missing ${manual}`);
 }
+// The product is Meeteor. The old label may appear only as literal text: code spans or these on-screen labels.
+const QUOTED_TEXT = /`[^`\r\n]*`|\*\*(?:Activate Meetintel|Sign out of Meetintel)\*\*/g;
+for (const file of [path.join(DOCS, 'admin-guide.md'), path.join(DOCS, 'user-manual', 'README.md'),
+  ...[...articles, 'README.md'].map((name) => path.join(KB, name))]) {
+  if (!fs.existsSync(file)) continue;
+  const prose = fs.readFileSync(file, 'utf8').replace(QUOTED_TEXT, '');
+  if (/meetintel/i.test(prose)) failures.push(`${file}: old product name outside quoted text`);
+}
 for (const match of index.matchAll(/\]\(([^)]+\.md)\)/g)) {
   if (!fs.existsSync(path.resolve(KB, match[1]))) failures.push(`Broken index link: ${match[1]}`);
 }
