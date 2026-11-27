@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startServer, tempDataDir } = require('./fixtures/server-harness');
+const { grantConsent } = require('./fixtures/consent');
 
 const FAKE_TRANSCRIPT = 'the palamis merger stays confidential until zebrafish';
 const FAKE_REFINED = 'the Palantir merger stays confidential until Zebrafish closes';
@@ -25,9 +26,12 @@ test('/transcribe and /transcribe/refine write no transcript text to the log', a
   await server.send('POST', '/user/settings', { headers, body: { openaiKey: 'fake-test-key' } });
   const audio = Buffer.from(new Float32Array(1600).buffer).toString('base64');
 
+  const meetingId = (await server.send('POST', '/meeting/start', { headers, body: {} })).body.id;
+  const consentId = await grantConsent(server, meetingId, ['microphone'], { headers });
+
   // The context makes the vocabulary correction change the text, which has its own log line.
   const heard = await server.send('POST', '/transcribe', {
-    headers, body: { audio, sampleRate: 16000, context: 'Palantir' },
+    headers, body: { meetingId, consentId, audio, sampleRate: 16000, context: 'Palantir' },
   });
   assert.equal(heard.status, 200);
   assert.match(heard.body.text, /Palantir merger/);

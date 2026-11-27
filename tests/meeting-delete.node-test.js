@@ -5,6 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startServer, tempDataDir } = require('./fixtures/server-harness');
+const { grantConsent } = require('./fixtures/consent');
+
+// A desktop recording is accepted only against a consent record that covers it.
+async function uploadRecording(server, meetingId) {
+  const consentId = await grantConsent(server, meetingId, ['recording']);
+  return server.send('POST', `/recording/upload?meetingId=${meetingId}&consentId=${consentId}`, { body: 'webm-bytes' });
+}
 
 async function register(server, email) {
   const res = await server.send('POST', '/auth/register', { body: { email, password: 'test-password' } });
@@ -68,7 +75,7 @@ test('a recording that cannot be deleted returns an error and keeps the meeting 
   const dataDir = tempDataDir(t);
   const server = await startServer(t, { dataDir, env: { DESKTOP_MODE: '1', DESKTOP_DEV: '1' } });
   const meetingId = await seedMeeting(server, {});
-  const upload = await server.send('POST', `/recording/upload?meetingId=${meetingId}`, { body: 'webm-bytes' });
+  const upload = await uploadRecording(server, meetingId);
   assert.equal(upload.status, 200);
   // A directory in the file's place makes unlink fail on every platform.
   const recording = path.join(dataDir, 'recordings', upload.body.path);
@@ -93,7 +100,7 @@ test('deleting a meeting removes its recording file', async t => {
   const dataDir = tempDataDir(t);
   const server = await startServer(t, { dataDir, env: { DESKTOP_MODE: '1', DESKTOP_DEV: '1' } });
   const meetingId = await seedMeeting(server, {});
-  const upload = await server.send('POST', `/recording/upload?meetingId=${meetingId}`, { body: 'webm-bytes' });
+  const upload = await uploadRecording(server, meetingId);
   const recording = path.join(dataDir, 'recordings', upload.body.path);
   assert.ok(fs.existsSync(recording));
 
