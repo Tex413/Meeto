@@ -4,8 +4,8 @@ Supported application runtime: **2.1.0** (`GET /version`). The package and Windo
 
 ## Read before you deploy
 
-- **Network exposure.** The server listens on all network interfaces. Anyone who can reach the web app can create an account. Compose publishes port 7432 on the host. Limit access with a firewall or private network.
-- **The desktop app has no login**, and its embedded server also listens on all network interfaces (default port 7433). Anyone who can connect to that port acts as the local user. Block inbound connections to it, and never put a proxy or tunnel in front of it.
+- **Network exposure.** Outside desktop mode the server listens on all network interfaces. Anyone who can reach the web app can create an account. Compose publishes port 7432 on the host. Limit access with a firewall or private network.
+- **The desktop app has no login.** Its embedded server (default port 7433) listens only on `127.0.0.1`, so other computers cannot connect to it. Any program on the same computer that connects acts as the local user. Never put a proxy or tunnel in front of it.
 - **Not a local-only product.** Meeting text can be sent to OpenAI or Anthropic. See "What leaves your computer" in the [user manual](user-manual/README.md). LM Studio, Claude Code and Codex are not selectable. Do not advertise a fully local AI backend or zero outbound meeting data for this build.
 - **No consent step is enforced.** Your organisation must handle notice and consent before any capture.
 
@@ -43,7 +43,7 @@ The optional `tunnel` profile starts `cloudflared` (`docker compose --profile tu
 - `npm run desktop` starts the Electron app from source. An unpackaged build skips the license check and opens developer tools; use it only for testing.
 - `npm run dist` builds the Windows installer into `dist/`. Packaging does not test the build. Installer packaging was not exercised while writing this guide.
 - A packaged app shows the activation screen until a valid license key is saved.
-- The local server uses port 7433 unless `PORT` is set. **At startup the app force-closes any process listening on that port.** Make sure nothing else uses it.
+- The local server uses port 7433 unless `PORT` is set. If another program already uses `127.0.0.1` on that port, the app shows an error and quits; it does not close that program. Opening the app a second time focuses the running window.
 - Data is in a `data` folder under Electron's `userData` directory for the app. The `Database ready:` line in `meetintel.log` shows the path.
 
 ## Configure

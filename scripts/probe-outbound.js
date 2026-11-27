@@ -54,7 +54,7 @@ function waitForStart(child) {
     child.stdout.on('data', chunk => {
       process.stdout.write(chunk);
       output += chunk;
-      if (output.includes(`running at http://0.0.0.0:${PORT}`)) {
+      if (output.includes(`running at http://127.0.0.1:${PORT}`)) {
         clearTimeout(timer);
         resolve();
       }

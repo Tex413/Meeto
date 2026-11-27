@@ -1,5 +1,4 @@
-const { app, BrowserWindow, session, desktopCapturer } = require('electron');
-const { execSync } = require('child_process');
+const { app, BrowserWindow, dialog, session, desktopCapturer } = require('electron');
 const path = require('path');
 
 // Configure the embedded server for desktop mode BEFORE requiring it:
@@ -17,25 +16,15 @@ process.env.PORT = process.env.PORT || '7433';
 
 const PORT = parseInt(process.env.PORT);
 
-// Free the port if a stale process is holding it (e.g. a leftover node server.js)
-function freePort(port) {
-  try {
-    const out = execSync(`netstat -ano | findstr :${port}`).toString();
-    for (const line of out.split('\n')) {
-      if (line.includes('LISTENING')) {
-        const m = line.trim().match(/(\d+)$/);
-        if (m) try { execSync(`taskkill /F /PID ${m[1]}`); } catch(e) {}
-      }
-    }
-  } catch(e) {}
-}
-freePort(PORT);
-
-const { serverReady } = require('./server');
-
 let mainWindow;
 
-app.whenReady().then(async () => {
+function describeStartError(error) {
+  if (error.code !== 'EADDRINUSE') return `The local server could not start (${error.code || error.name}).`;
+  return `Meetintel could not start because port ${PORT} is already in use. `
+    + 'Close the program using that port, then open Meetintel again.';
+}
+
+async function openMainWindow(serverStarted) {
   // Grant microphone (and camera) permission to the renderer
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['media', 'microphone', 'camera', 'audioCapture'].includes(permission));
@@ -65,11 +54,34 @@ app.whenReady().then(async () => {
   });
 
   mainWindow.setMenuBarVisibility(false);
-  await serverReady;
+  const startError = await serverStarted;
+  if (startError) {
+    dialog.showErrorBox('Meetintel', describeStartError(startError));
+    app.quit();
+    return;
+  }
   mainWindow.loadURL(`http://localhost:${PORT}`);
   if (!app.isPackaged) mainWindow.webContents.openDevTools({ mode: 'detach' });
-});
+}
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+function startDesktopApp() {
+  // The server listens on IPv4 loopback only. Without this the window tries [::1] first, where any other
+  // program could answer and be given the microphone. The origin stays localhost, so saved settings survive.
+  app.commandLine.appendSwitch('host-resolver-rules', 'MAP localhost 127.0.0.1');
+  // Required only now, so a second launch never opens the database. Handled at once, before Electron is ready.
+  const serverStarted = require('./server').serverReady.then(() => null, error => error);
+
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+  app.whenReady().then(() => openMainWindow(serverStarted));
+}
+
+// A busy port is never cleared by killing its owner, which may be another program or this app mid-meeting.
+if (app.requestSingleInstanceLock()) startDesktopApp();
+else app.quit();
