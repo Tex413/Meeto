@@ -1,0 +1,21 @@
+{
+  "product": "Meeteor",
+  "version": "2.1.0",
+  "tenantFile": "config/tenant.sulenna.json",
+  "articleDir": "docs/kb",
+  "exclude": ["README.md"],
+  "answerChecks": [
+    { "question": "How do I get started with Meeteor?", "expectArticle": "getting-started" },
+    { "question": "Does my meeting data leave my computer?", "expectArticle": "data-privacy" },
+    { "question": "What are the known limitations of this version?", "expectArticle": "known-limitations" },
+    { "question": "How do I buy and activate a license?", "expectArticle": "activate-license" },
+    { "question": "Why is my license key rejected?", "expectArticle": "license-key-rejected" },
+    { "question": "What are the free trial limits, and is my data deleted?", "expectArticle": "free-trial" },
+    { "question": "How do I mute or unmute the spoken voice?", "expectArticle": "mute-voice" },
+    { "question": "How do I create and export action items?", "expectArticle": "action-items" },
+    { "question": "Why is no transcript appearing from my microphone with Whisper?", "expectArticle": "no-transcript" },
+    { "question": "How do I fix \"Microphone access denied\"?", "expectArticle": "microphone-denied" },
+    { "question": "How do I delete a past meeting?", "expectArticle": "delete-meeting" },
+    { "question": "How do I connect Microsoft To Do and choose a list to send tasks?", "expectArticle": "microsoft-to-do" }
+  ]
+}
