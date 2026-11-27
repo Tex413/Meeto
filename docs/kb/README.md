@@ -23,6 +23,7 @@ This file is an index. It is not a knowledge article.
 ### Main tasks
 
 - [How do I start, save, and end a meeting?](record-meeting.md)
+- [How does the consent step work before capture?](meeting-consent.md)
 - [How do I choose the microphone and transcription settings?](audio-and-recording.md)
 - [How do I manage insight cards?](use-cards.md)
 - [How do I ask Meeteor a spoken question?](ask-a-question.md)
