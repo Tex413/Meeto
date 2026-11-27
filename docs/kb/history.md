@@ -13,6 +13,6 @@ Open **History** and choose a meeting to read its cards and transcript, or play 
 1. Select **History** (clock icon).
 2. Select a meeting. The list shows start time, duration or **in progress**, words and cards; the card count can include deleted cards.
 3. Select **Cards** or **Transcript**.
-4. If a **Recording** tab is shown in the desktop app, open it to play the recording.
+4. If a **Recording** tab is shown in the desktop app, open it to play the recording. If the meeting has several parts, choose one there.
 5. Use the back arrow for the list, or the close button for the live screen.
 6. To-dos are not shown in History. Nothing from a past meeting carries into the next one.

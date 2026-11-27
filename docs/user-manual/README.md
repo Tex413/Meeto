@@ -32,7 +32,7 @@ Contents:
 
 ## Before you start
 
-- **Get consent yourself.** The app does not announce itself and has no consent step. Before you select **Start listening** or **Record A/V**, or turn on the room camera, tell every participant that an AI is present and get the consent your meeting requires.
+- **Consent comes first.** Nothing is captured until you complete [the consent step](../kb/meeting-consent.md) with everyone present. Its wording is a draft that no lawyer has approved, and what it saves is your statement, not proof of consent.
 - **This build uses cloud AI.** Cards, spoken answers, action-item extraction and transcript cleanup use OpenAI or Anthropic. **AI transcript cleanup** is on by default. Read [What leaves your computer](#what-leaves-your-computer) before a confidential meeting.
 - **Check what the app tells you.** Cards and answers do not reliably name their sources. Verify important facts yourself.
 
@@ -123,7 +123,7 @@ Provider, model and keys are saved on the server for your account. Wake word and
 
 ## Find your way around the main screen
 
-The toolbar has, from left to right: **Session title**, **Record** (or **End**), the build number, status, microphone level, microphone menu, **Start listening**, **Record A/V** (desktop only), the trial badge, **Export action items**, **History**, **Export CSV**, **Clear all**, **Test AI**, **Debug log**, **Enable room camera**, **Settings**, **Sign out**, the presence orb with the wake-word badge, and a BKV stock badge. Icon buttons show their names when you point at them.
+The toolbar has, from left to right: **Session title**, **Record** (or **End**), the build number, status, microphone level, microphone menu, **Start listening**, **Record A/V** (desktop only), the trial badge, **Export action items**, **History**, **Export CSV**, **Clear all**, **Test AI**, **Debug log**, **Settings**, **Sign out**, the presence orb with the wake-word badge, and a BKV stock badge. Icon buttons show their names when you point at them.
 
 **Mute voice** stays in the bottom-right corner of the screen (see [Mute the spoken voice](#mute-the-spoken-voice)).
 
@@ -155,14 +155,14 @@ Holding Space has no effect while the cursor is in a text box. The app does not 
 
 ## Run a meeting
 
-**Record** and **Start listening** do different things. **Record** creates the saved meeting. **Start listening** opens the microphone. Use both. If you listen without **Record**, the transcript and cards are not saved.
+**Record** creates the saved meeting. **Start listening** asks for consent and then opens the microphone; if no meeting is active, it creates one.
 
-1. Tell participants and get their consent.
-2. If the screen still shows an earlier meeting, select **Clear all** now, **before** you select **Record**. Otherwise the earlier transcript and to-dos can be saved into the new meeting. **Clear all** does not ask for confirmation.
+1. Have everyone who will be heard present for the consent step.
+2. If you need the to-dos of a meeting you ended, export them now: starting the next meeting clears the live screen.
 3. Enter a **Session title**. If you leave it blank, the app uses the date and time.
 4. Optionally type or paste notes into **Context**. The app keeps this text in your browser for later visits, so remove anything you do not want kept or sent to the AI.
 5. Select **Record**. The badge shows the title.
-6. Select **Start listening** and allow microphone access. Text appears in **Live transcript**, with a word count.
+6. Select **Start listening**, complete **Consent before capture** and allow microphone access. While consent is recorded, a bottom bar has **Someone joined** and **Withdraw consent · stop all capture**; after **End** or a withdrawal, the app sends no more meeting text to AI. Text appears in **Live transcript**, with a word count.
 7. To pause or silence the microphone, select **Stop**. Select **Start listening** to resume.
 8. To finish, select **Stop** first and wait a few seconds for the last words to appear. Then select **End**. The badge shows **Saved**. **End** also stops listening and any A/V recording.
 
@@ -193,7 +193,7 @@ The amount shown as **$… est.** in the controls bar is a rough figure from car
 You ask by voice. There is no box for typing questions.
 
 1. In **Settings**, set the **Wake word** (default **Craig**) and select **Save**. The badge beside the orb shows **Say "…"** and the injection mode. Select the badge to open Settings. An ordinary first name tends to be recognised better than a made-up word.
-2. Get consent, select **Record** if you want the answer saved, then **Start listening**.
+2. Select **Start listening** and complete the consent step.
 3. In one sentence, without a long pause, say the wake word followed by your question.
 4. Wait. The app sends the question, with Context, matching document excerpts and market figures, to your AI provider. It speaks a short answer and adds a **board member** card with it.
 5. Before asking another question, pause for at least 8 seconds. A second question run into the same stretch of speech can be ignored.
@@ -233,14 +233,7 @@ Presenter view does not tell participants what is being captured. Tell them your
 
 ## Use the room camera
 
-The camera is off each time the page loads. It counts faces and detects a raised hand. It does not identify people, and the app does not save or send camera images. The detection model files are downloaded from Google's servers each time the camera starts or from your browser's cache.
-
-1. Tell the people in the room, and confirm that camera use is allowed.
-2. Select **Enable room camera** (camera icon) and allow camera access.
-3. Check the badge: **Camera active**, followed by the number in the room and **hand raised** when detected. The badge stays visible while the camera is on. No video preview is shown.
-4. Select the camera button again to turn it off.
-
-The count and hand signal are estimates. They are shown on screen only; the app does not act on them. If the model cannot load, the camera turns itself off and **Debug log** shows why.
+The room camera is turned off in this version while a legal review is pending, and its button is hidden. See [the room camera article](../kb/room-camera.md).
 
 ## Follow the market strip
 
@@ -297,13 +290,13 @@ If the list menu is empty, disconnect and sign in again, or ask your administrat
 
 **Record A/V** is separate from transcription. It records the primary screen, system audio where available (it is requested from Windows), and your default microphone.
 
-1. Get consent from everyone who will be heard or seen, including remote participants. Close anything on your primary screen that should not be recorded.
-2. Select **Record A/V**. If no meeting is active, one is created. The button changes to **Stop recording**.
+1. Gather everyone who will be heard or seen, including remote participants. Close anything on your primary screen that should not be recorded.
+2. Select **Record A/V** and complete the consent step; the announcement and answers become part of the recording. If no meeting is active, one is created. The button changes to **Stop recording**.
 3. To also get a live transcript, select **Start listening**.
 4. Select **Stop recording**. The button shows **Saving…** while the file is saved. **End** also stops and saves the recording.
 5. Open it from **History**, in the **Recording** tab.
 
-Each meeting keeps **one** recording. Recording again in the same meeting **replaces the earlier file**. The recording is saved only when you stop, so do not close the app while recording or saving. The microphone menu does not choose the recording's microphone. If your microphone cannot be opened, recording continues without it; check **Debug log**.
+Recording again in the same meeting adds a new part; earlier parts are kept, and you choose one in the **Recording** tab. **Generate transcript** reads only the part in the player. The recording is saved only when you stop, so do not close the app while recording or saving. The microphone menu does not choose the recording's microphone. If your microphone cannot be opened, recording continues without it; check **Debug log**.
 
 ## Review past meetings
 
@@ -348,12 +341,12 @@ This empties the live transcript, cards and to-do list. It does not delete saved
 
 A Stream Deck or other tool on the same computer can start and stop **listening** in an open, signed-in app. Your administrator must set this up; see the administrator guide.
 
-An MCP client can run `npm run mcp` from the application folder. Its tools are `start_meeting_recording` and `stop_meeting_recording`. Despite their names, they start and stop **listening**. They do not create a meeting, so nothing is saved unless you select **Record**, and they do not start **Record A/V**.
+An MCP client can run `npm run mcp` from the application folder. Its tools are `start_meeting_recording` and `stop_meeting_recording`. Despite their names, they start and stop **listening**, and they do not start **Record A/V**. A remote start never gives consent: without it, the app only opens **Consent before capture**, creating a meeting if none is active.
 
-1. Get consent before any remote start.
+1. Have someone at the screen to complete the consent step.
 2. Open the app and sign in.
 3. Run the tool.
-4. **Look at the app to confirm.** The start or stop button must change. The tool can report success even when no app window received the command.
+4. **Look at the app to confirm.** The consent dialog must open, or the start or stop button must change. The tool can report success even when no app window received the command.
 
 ## Troubleshooting
 
@@ -406,14 +399,14 @@ The app also contacts outside services without meeting content: market data (EIA
 
 ## Known limitations
 
-- **Consent:** no consent step or AI announcement. Capture can start without either.
+- **Consent:** the announcement wording is not approved by counsel, and the record is the host's statement, not proof. The room camera is turned off.
 - **AI backends:** only OpenAI and Anthropic. LM Studio, Claude Code and Codex cannot be selected.
 - **Local use:** meeting text can leave your network, as listed above.
 - **Sources:** cards and spoken answers do not reliably name their sources.
 - **Asking:** voice only. No typed questions.
 - **Speakers:** no speaker identification. **Others only** does not keep your words out of cards.
 - **Materials:** the app makes cards and an action-item list. It does not create plans, documents, slides or code changes.
-- **Memory:** no memory carries over from one meeting to the next. Live transcript and to-dos are not cleared automatically between meetings.
+- **Memory:** no memory carries over from one meeting to the next. Starting the next meeting after **End** clears the live transcript, cards and to-dos.
 - **To-dos:** not shown in History or reloaded after a page refresh.
 - **Transcript cleanup:** changes the screen only, not the saved transcript.
 - **Exports:** CSV has card rows only and includes deleted cards.

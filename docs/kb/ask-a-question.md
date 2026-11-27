@@ -11,7 +11,7 @@ While the app is listening, say the wake word (default **Craig**) and your quest
 
 ## Steps
 1. In **Settings**, set the **Wake word** and select **Save**. The badge by the orb shows it.
-2. Get consent, select **Record** if the answer should be saved, then **Start listening**.
+2. Select **Start listening** and complete the [consent step](meeting-consent.md).
 3. Say the wake word followed by your question, without a long pause.
 4. Wait for the spoken answer and its **board member** card.
 5. Pause at least 8 seconds before your next question; one run into the same stretch of speech can be ignored.
